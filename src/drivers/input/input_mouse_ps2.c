@@ -17,6 +17,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/settings/settings.h>
 #include <zephyr/sys/util.h>
+#include <zephyr/kernel.h> // For k_work_delayable and timing functions
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
@@ -203,6 +204,17 @@ struct zmk_mouse_ps2_data {
     bool button_l_is_held;
     bool button_m_is_held;
     bool button_r_is_held;
+
+    // Tap detection
+    bool is_moving;                  // Currently receiving movement events
+    int64_t first_movement_time_ms;  // When movement started
+    int64_t last_movement_time_ms;   // When last movement was detected
+    bool is_dragging;                // Currently in dragging state
+    uint32_t movement_count;         // Count of movement events in current sequence
+    bool last_was_tap;               // Flag indicating the last movement was a tap
+    int64_t last_tap_time_ms;        // Timestamp of the last tap
+    bool tap_in_progress;            // Flag indicating tap detection is in progress
+    struct k_work_delayable tap_timer; // Timer for detecting end of movement
 
     bool activity_reporting_on;
     bool is_trackpoint;
@@ -509,134 +521,163 @@ zmk_mouse_ps2_activity_parse_packet_buffer(zmk_mouse_ps2_packet_mode packet_mode
 
 static bool zmk_mouse_ps2_is_non_zero_1d_movement(int16_t speed) { return speed != 0; }
 
+// Configuration values for tap detection
+#define TAP_COOLDOWN_TIMEOUT_MS 80  // Time to wait for movement to end
+#define TAP_MAX_DURATION_MS 100     // Maximum duration for a tap
+#define TAP_DOUBLE_TAP_TIMEOUT_MS 300  // Maximum time between taps for double tap
+#define TAP_MAX_EVENTS 10           // Maximum number of events for a tap
+
+// Tap detection timer callback
+static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
+    // Get the work_delayable structure
+    struct k_work_delayable *dwork = k_work_delayable_from_work(work);
+
+    // Get the data structure that contains the timer
+    struct zmk_mouse_ps2_data *data =
+        CONTAINER_OF(dwork, struct zmk_mouse_ps2_data, tap_timer);
+
+    // Current time
+    int64_t current_time_ms = k_uptime_get();
+
+    // If we're still in moving state
+    if (data->is_moving) {
+        // Calculate total movement duration
+        int64_t total_duration = data->last_movement_time_ms - data->first_movement_time_ms;
+
+        LOG_INF("Movement ended. Duration: %lld ms, Events: %d",
+                total_duration, data->movement_count);
+
+        // Check if this was a tap (short duration movement)
+        // A tap should be a very short duration movement (≤100ms) with few events
+        if (total_duration <= TAP_MAX_DURATION_MS &&
+            !data->is_dragging &&
+            data->movement_count <= TAP_MAX_EVENTS) {
+
+            LOG_WRN("TAP DETECTED with duration %lld ms, %d events",
+                    total_duration, data->movement_count);
+
+            // Check for double tap
+            if (data->last_was_tap) {
+                int64_t time_between_taps = current_time_ms - data->last_tap_time_ms;
+
+                if (time_between_taps <= TAP_DOUBLE_TAP_TIMEOUT_MS) {
+                    // This is a double tap! Trigger mouse click
+                    LOG_WRN("DOUBLE TAP DETECTED - Time between taps: %lld ms - TRIGGERING MOUSE CLICK",
+                           time_between_taps);
+
+                    // Trigger a left mouse button click
+                    input_report_key(data->dev, INPUT_BTN_0, 1, false, K_FOREVER);
+                    k_sleep(K_MSEC(30)); // Small delay between press and release
+                    input_report_key(data->dev, INPUT_BTN_0, 0, true, K_FOREVER);
+
+                    // Reset double tap tracking after handling
+                    data->last_was_tap = false;
+                } else {
+                    // Too much time between taps, this starts a new sequence
+                    LOG_DBG("Time between taps too long: %lld ms > %d ms",
+                           time_between_taps, TAP_DOUBLE_TAP_TIMEOUT_MS);
+                    data->last_was_tap = true;
+                    data->last_tap_time_ms = current_time_ms;
+                }
+            } else {
+                // First tap, record it for potential double tap
+                data->last_was_tap = true;
+                data->last_tap_time_ms = current_time_ms;
+                LOG_DBG("First tap detected - waiting for potential double tap");
+            }
+        } else if (data->is_dragging) {
+            LOG_WRN("DRAG ENDED after %lld ms, %d events",
+                    total_duration, data->movement_count);
+            // Reset double tap tracking since a drag occurred
+            data->last_was_tap = false;
+        } else {
+            // Not a tap or drag, reset double tap tracking
+            data->last_was_tap = false;
+        }
+
+        // Reset movement tracking
+        data->is_moving = false;
+        data->is_dragging = false;
+        data->movement_count = 0;
+        data->tap_in_progress = false;
+    }
+}
+
+// Function to initialize the tap detection data
+static void zmk_mouse_ps2_init_tap_detection(struct zmk_mouse_ps2_data *data) {
+    // Initialize tap detection fields
+    data->is_moving = false;
+    data->first_movement_time_ms = 0;
+    data->last_movement_time_ms = 0;
+    data->is_dragging = false;
+    data->movement_count = 0;
+    data->last_was_tap = false;
+    data->last_tap_time_ms = 0;
+    data->tap_in_progress = false;
+
+    // Initialize the tap timer
+    k_work_init_delayable(&data->tap_timer, zmk_mouse_ps2_tap_timer_callback);
+}
+
+// Modified mouse movement function with tap detection
 void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
     struct zmk_mouse_ps2_data *data = &zmk_mouse_ps2_data;
     int ret = 0;
+    int64_t current_time_ms = k_uptime_get();
 
     bool have_x = zmk_mouse_ps2_is_non_zero_1d_movement(mov_x);
     bool have_y = zmk_mouse_ps2_is_non_zero_1d_movement(mov_y);
 
-    if (have_x) {
-        ret = input_report_rel(data->dev, INPUT_REL_X, mov_x, !have_y, K_NO_WAIT);
-    }
-    if (have_y) {
-        ret = input_report_rel(data->dev, INPUT_REL_Y, mov_y, true, K_NO_WAIT);
-    }
-}
+    if (have_x || have_y) {
+        // If movement is detected, update tap detection logic
 
-void zmk_mouse_ps2_activity_click_buttons(bool button_l, bool button_m, bool button_r) {
-    struct zmk_mouse_ps2_data *data = &zmk_mouse_ps2_data;
-    const struct zmk_mouse_ps2_config *config = &zmk_mouse_ps2_config;
+        // Cancel any pending tap timer
+        k_work_cancel_delayable(&data->tap_timer);
 
-    // TODO: Integrate this with the proper button mask instead
-    // of hardcoding the mouse button indeces.
-    // Check hid.c and zmk_hid_mouse_buttons_press() for more info.
+        // If this is the start of a new movement sequence
+        if (!data->is_moving) {
+            data->is_moving = true;
+            data->first_movement_time_ms = current_time_ms;
+            data->movement_count = 1;
+            data->tap_in_progress = true;
+            LOG_DBG("Movement started at %lld ms", current_time_ms);
+        } else {
+            data->movement_count++;
 
-    int buttons_pressed = 0;
-    int buttons_released = 0;
+            // Check if we've been moving long enough to be considered dragging
+            int64_t movement_duration = current_time_ms - data->first_movement_time_ms;
 
-    // First we check which mouse button press states have changed
-    bool button_l_pressed = false;
-    bool button_l_released = false;
-    if (button_l == true && data->button_l_is_held == false) {
-        LOG_INF("Pressed button_l");
-
-        button_l_pressed = true;
-        buttons_pressed++;
-    } else if (button_l == false && data->button_l_is_held == true) {
-        LOG_INF("Releasing button_l");
-
-        button_l_released = true;
-        buttons_released++;
-    }
-
-    bool button_m_released = false;
-    bool button_m_pressed = false;
-    if (button_m == true && data->button_m_is_held == false) {
-        LOG_INF("Pressing button_m");
-
-        button_m_pressed = true;
-        buttons_pressed++;
-    } else if (button_m == false && data->button_m_is_held == true) {
-        LOG_INF("Releasing button_m");
-
-        button_m_released = true;
-        buttons_released++;
-    }
-
-    bool button_r_released = false;
-    bool button_r_pressed = false;
-    if (button_r == true && data->button_r_is_held == false) {
-        LOG_INF("Pressing button_r");
-
-        button_r_pressed = true;
-        buttons_pressed++;
-    } else if (button_r == false && data->button_r_is_held == true) {
-        LOG_INF("Releasing button_r");
-
-        button_r_released = true;
-        buttons_released++;
-    }
-
-    // Then we check if this is likely a transmission error
-    if (buttons_pressed > 1 || buttons_released > 1) {
-        LOG_WRN("Ignoring button presses: Received %d button presses "
-                "and %d button releases in one packet. "
-                "Probably tranmission error.",
-                buttons_pressed, buttons_released);
-
-        zmk_mouse_ps2_activity_abort_cmd("Multiple button presses");
-        return;
-    }
-
-    if (config->disable_clicking != true) {
-        // If it wasn't, we actually send the events.
-        if (buttons_pressed > 0 || buttons_released > 0) {
-
-            int buttons_need_reporting = buttons_pressed + buttons_released;
-
-            // Left button
-            if (button_l_pressed) {
-
-                input_report_key(data->dev, INPUT_BTN_0, 1,
-                                 buttons_need_reporting == 1 ? true : false, K_FOREVER);
-                data->button_l_is_held = true;
-            } else if (button_l_released) {
-
-                input_report_key(data->dev, INPUT_BTN_0, 0,
-                                 buttons_need_reporting == 1 ? true : false, K_FOREVER);
-                data->button_l_is_held = false;
+            // If we're getting rapid movement events or moving for a long time, it's a drag
+            if (!data->is_dragging && (movement_duration > 300 || data->movement_count > 20)) {
+                data->is_dragging = true;
+                data->tap_in_progress = false; // No longer a potential tap
+                LOG_WRN("DRAG DETECTED after %lld ms with %d movements",
+                       movement_duration, data->movement_count);
             }
+        }
 
-            buttons_need_reporting--;
+        // Update last movement time
+        data->last_movement_time_ms = current_time_ms;
 
-            // Right button
-            if (button_r_pressed) {
+        // Schedule the tap timer - this will fire if no more events are received
+        // Use a shorter timer when still within tap threshold to detect taps quicker
+        int64_t movement_duration = current_time_ms - data->first_movement_time_ms;
+        uint32_t timeout = (movement_duration < TAP_MAX_DURATION_MS) ?
+                          (TAP_COOLDOWN_TIMEOUT_MS / 2) : TAP_COOLDOWN_TIMEOUT_MS;
+        k_work_schedule(&data->tap_timer, K_MSEC(timeout));
 
-                input_report_key(data->dev, INPUT_BTN_1, 1,
-                                 buttons_need_reporting == 1 ? true : false, K_FOREVER);
-                data->button_r_is_held = true;
-            } else if (button_r_released) {
-
-                input_report_key(data->dev, INPUT_BTN_1, 0,
-                                 buttons_need_reporting == 1 ? true : false, K_FOREVER);
-                data->button_r_is_held = false;
+        // Only report movement if we're not in a potential tap situation
+        // or if we've already determined this is a drag
+        if (!data->tap_in_progress || data->is_dragging) {
+            if (have_x) {
+                ret = input_report_rel(data->dev, INPUT_REL_X, mov_x, !have_y, K_NO_WAIT);
             }
-
-            buttons_need_reporting--;
-
-            // Middle Button
-            if (button_m_pressed) {
-
-                input_report_key(data->dev, INPUT_BTN_2, 1,
-                                 buttons_need_reporting == 1 ? true : false, K_FOREVER);
-                data->button_m_is_held = true;
-            } else if (button_m_released) {
-
-                input_report_key(data->dev, INPUT_BTN_2, 0,
-                                 buttons_need_reporting == 1 ? true : false, K_FOREVER);
-                data->button_m_is_held = false;
+            if (have_y) {
+                ret = input_report_rel(data->dev, INPUT_REL_Y, mov_y, true, K_NO_WAIT);
             }
+        } else {
+            // We're in a potential tap situation, suppress movement
+            LOG_DBG("Suppressing movement during potential tap (x=%d, y=%d)", mov_x, mov_y);
         }
     }
 }
@@ -1607,6 +1648,7 @@ static void zmk_mouse_ps2_init_thread(int dev_ptr, int unused);
 int zmk_mouse_ps2_init_power_on_reset();
 int zmk_mouse_ps2_init_wait_for_mouse(const struct device *dev);
 
+// Initialize the zmk_mouse_ps2_data structure with tap detection
 static int zmk_mouse_ps2_init(const struct device *dev) {
     LOG_DBG("Inside zmk_mouse_ps2_init");
 
@@ -1732,6 +1774,9 @@ static void zmk_mouse_ps2_init_thread(int dev_ptr, int unused) {
     }
 
     k_work_init_delayable(&data->packet_buffer_timeout, zmk_mouse_ps2_activity_packet_timout);
+
+    // Initialize tap detection
+    zmk_mouse_ps2_init_tap_detection(data);
 
     return;
 }
