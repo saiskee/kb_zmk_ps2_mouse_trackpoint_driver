@@ -115,7 +115,7 @@ static void movement_end_timer_callback(struct k_work *work) {
             // Trigger a left mouse button click using ZMK's functions
             // Use mouse button 0 for left click (INPUT_BTN_LEFT - INPUT_BTN_LEFT = 0)
             zmk_hid_mouse_button_press(0); // Press left mouse button
-            k_sleep(K_MSEC(10));           // Longer delay to ensure click is registered
+            k_sleep(K_MSEC(30));           // Longer delay to ensure click is registered
             zmk_hid_mouse_button_release(0); // Release left mouse button
             zmk_endpoints_send_mouse_report(); // Send the mouse report
         } else if (data->is_dragging) {
