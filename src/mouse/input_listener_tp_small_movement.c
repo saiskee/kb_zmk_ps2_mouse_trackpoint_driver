@@ -102,9 +102,17 @@ static void movement_end_timer_callback(struct k_work *work) {
                 total_duration, data->movement_count);
 
         // Check if this was a tap (short duration movement)
-        if (total_duration <= config->tap_max_duration_ms && !data->is_dragging) {
+        // A tap should be a short duration movement with relatively few events
+        if (total_duration <= config->tap_max_duration_ms &&
+            !data->is_dragging &&
+            data->movement_count <= 15) {  // Limit number of events for a tap
+
             LOG_WRN("TAP DETECTED with duration %lld ms, %d events",
                     total_duration, data->movement_count);
+
+            // Here you could trigger a mouse click if desired
+            // emit_mouse_button_event(INPUT_BTN_LEFT, 1); /* Press */
+            // emit_mouse_button_event(INPUT_BTN_LEFT, 0); /* Release */
         } else if (data->is_dragging) {
             LOG_WRN("DRAG ENDED after %lld ms, %d events",
                     total_duration, data->movement_count);
@@ -149,9 +157,9 @@ static void emit_mouse_button_event(uint16_t button_code, uint16_t state) {
     static const struct small_movement_detector_config small_movement_detector_config_##n = { \
         .tracked_device = DEVICE_DT_GET(DT_INST_PHANDLE(n, device)), \
         .movement_threshold = DT_INST_PROP_OR(n, movement_threshold, 3), \
-        .drag_threshold_ms = DT_INST_PROP_OR(n, drag_threshold_ms, 300), \
-        .cooldown_timeout_ms = DT_INST_PROP_OR(n, cooldown_timeout_ms, 200), \
-        .tap_max_duration_ms = DT_INST_PROP_OR(n, tap_max_duration_ms, 200), \
+        .drag_threshold_ms = DT_INST_PROP_OR(n, drag_threshold_ms, 400), \
+        .cooldown_timeout_ms = DT_INST_PROP_OR(n, cooldown_timeout_ms, 100), \
+        .tap_max_duration_ms = DT_INST_PROP_OR(n, tap_max_duration_ms, 300), \
     }; \
     \
     /* Callback function to handle input events */ \
@@ -187,13 +195,17 @@ static void emit_mouse_button_event(uint16_t button_code, uint16_t state) {
                     data->is_moving = true; \
                     data->first_movement_time_ms = current_time_ms; \
                     data->movement_count = 1; \
-                    LOG_INF("Movement started at %lld ms", current_time_ms); \
+                    LOG_DBG("Movement started at %lld ms", current_time_ms); \
                 } else { \
                     data->movement_count++; \
                     \
                     /* Check if we've been moving long enough to be considered dragging */ \
                     int64_t movement_duration = current_time_ms - data->first_movement_time_ms; \
-                    if (!data->is_dragging && movement_duration > config->drag_threshold_ms) { \
+                    \
+                    /* If we're getting rapid movement events or moving for a long time, it's a drag */ \
+                    if (!data->is_dragging && \
+                        (movement_duration > config->drag_threshold_ms || \
+                         data->movement_count > 20)) { \
                         data->is_dragging = true; \
                         LOG_WRN("DRAG DETECTED after %lld ms with %d movements", \
                                movement_duration, data->movement_count); \
@@ -204,7 +216,11 @@ static void emit_mouse_button_event(uint16_t button_code, uint16_t state) {
                 data->last_movement_time_ms = current_time_ms; \
                 \
                 /* Schedule the movement end timer - this will fire if no more events are received */ \
-                k_work_schedule(&data->movement_end_timer, K_MSEC(config->cooldown_timeout_ms)); \
+                /* Use a shorter timer when still within tap threshold to detect taps quicker */ \
+                int64_t movement_duration = current_time_ms - data->first_movement_time_ms; \
+                uint32_t timeout = (movement_duration < config->tap_max_duration_ms) ? \
+                                  (config->cooldown_timeout_ms / 2) : config->cooldown_timeout_ms; \
+                k_work_schedule(&data->movement_end_timer, K_MSEC(timeout)); \
             } \
             \
             /* Reset state for next event */ \
