@@ -682,6 +682,42 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
     }
 }
 
+void zmk_mouse_ps2_activity_click_buttons(bool button_l, bool button_m, bool button_r) {
+    struct zmk_mouse_ps2_data *data = &zmk_mouse_ps2_data;
+    const struct zmk_mouse_ps2_config *config = &zmk_mouse_ps2_config;
+
+    // If clicking is disabled in the configuration, ignore button clicks
+    if (config->disable_clicking) {
+        return;
+    }
+
+    // Check if any button state has changed from the previously tracked state
+    if (button_l != data->button_l_is_held) {
+        // Report left button state change
+        input_report_key(data->dev, INPUT_BTN_LEFT, button_l, false, K_FOREVER);
+        data->button_l_is_held = button_l;
+    }
+
+    if (button_m != data->button_m_is_held) {
+        // Report middle button state change
+        input_report_key(data->dev, INPUT_BTN_MIDDLE, button_m, false, K_FOREVER);
+        data->button_m_is_held = button_m;
+    }
+
+    if (button_r != data->button_r_is_held) {
+        // Report right button state change
+        input_report_key(data->dev, INPUT_BTN_RIGHT, button_r, false, K_FOREVER);
+        data->button_r_is_held = button_r;
+    }
+
+    // Check if any button state has changed, if so then sync the report
+    if (button_l != data->button_l_is_held ||
+        button_m != data->button_m_is_held ||
+        button_r != data->button_r_is_held) {
+        input_sync(data->dev, K_FOREVER);
+    }
+}
+
 /*
  * PS/2 Command Sending Wrapper
  */
