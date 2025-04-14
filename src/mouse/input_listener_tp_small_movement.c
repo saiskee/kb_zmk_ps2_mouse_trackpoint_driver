@@ -40,6 +40,7 @@ struct small_movement_detector_data {
     bool potential_tap;               // Flag for potential tap detection
     int64_t last_movement_time_ms;    // Timestamp of last movement
     uint32_t tap_count;               // Count of taps detected
+    bool is_dragging;                 // Flag to indicate continuous movement/dragging
 
     // Double tap tracking
     int64_t last_tap_time_ms;         // Timestamp of last tap for double-tap detection
@@ -61,6 +62,7 @@ static int small_movement_detector_init(const struct device *dev) {
     data->potential_tap = false;
     data->last_movement_time_ms = 0;
     data->tap_count = 0;
+    data->is_dragging = false;
 
     // Initialize double tap detection
     data->last_tap_time_ms = 0;
@@ -134,21 +136,36 @@ static void emit_mouse_button_event(uint16_t button_code, uint16_t state) {
                    data->x_movement, data->y_movement); \
             /* Track continuous movement to detect drags vs taps */ \
             if (data->x_movement != 0 || data->y_movement != 0) { \
-                if (!data->potential_tap) { \
+                if (!data->potential_tap && !data->is_dragging) { \
                     /* First movement, start tracking potential tap */ \
                     data->potential_tap = true; \
                     data->last_movement_time_ms = current_time_ms; \
                     LOG_DBG("**** POTENTIAL TAP STARTED: Waiting for timeout period ****"); \
                 } else { \
-                    /* Continuous movement - this is likely a drag, not a tap */ \
-                    /* Only reset the timestamp if significant time has passed to avoid constant resets */ \
+                    /* Check if this is a drag (multiple movements close together) */ \
                     int64_t time_since_last = current_time_ms - data->last_movement_time_ms; \
-                    if (time_since_last > 20) { /* Small buffer for consecutive events */ \
-                        data->last_movement_time_ms = current_time_ms; \
-                        LOG_DBG("**** CONTINUOUS MOVEMENT DETECTED - LIKELY DRAG, NOT TAP ****"); \
+                    \
+                    /* If we're getting continuous movement within a short time, this is a drag */ \
+                    if (time_since_last < 50) { /* Threshold for continuous movement */ \
+                        data->is_dragging = true; \
+                        data->potential_tap = false; /* Cancel any potential tap */ \
+                        LOG_DBG("**** DRAG DETECTED - CANCELLING POTENTIAL TAP ****"); \
+                    } \
+                    \
+                    /* Update timestamp for next movement detection */ \
+                    data->last_movement_time_ms = current_time_ms; \
+                } \
+            } else { \
+                /* No movement, check if dragging has stopped */ \
+                if (data->is_dragging) { \
+                    int64_t time_since_last = current_time_ms - data->last_movement_time_ms; \
+                    if (time_since_last > 200) { /* Time threshold to exit drag mode */ \
+                        data->is_dragging = false; \
+                        LOG_DBG("**** DRAG ENDED ****"); \
                     } \
                 } \
             } \
+            \
             /* Check if there was a previous potential tap that timed out */ \
             if (data->potential_tap) { \
                 int64_t elapsed_ms = current_time_ms - data->last_movement_time_ms; \
