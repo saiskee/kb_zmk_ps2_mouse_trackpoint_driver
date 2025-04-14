@@ -80,7 +80,7 @@ static void emit_mouse_button_event(uint16_t button_code, uint16_t state) {
     // Button codes from INPUT_BTN_LEFT (0x110) start at 0x110
     int button_idx = button_code - INPUT_BTN_LEFT;
 
-    if (button_idx < 0 || button_idx >= ZMK_MOUSE_HID_NUM_BUTTONS) {
+    if (button_idx < 0 || button_idx >= ZMK_HID_MOUSE_NUM_BUTTONS) {
         LOG_ERR("Invalid button index: %d", button_idx);
         return;
     }
