@@ -102,18 +102,20 @@ static void movement_end_timer_callback(struct k_work *work) {
                 total_duration, data->movement_count);
 
         // Check if this was a tap (short duration movement)
-        // A tap should be a very short duration movement (≤60ms) with few events
+        // A tap should be a very short duration movement (≤100ms) with few events
         if (total_duration <= config->tap_max_duration_ms &&
             !data->is_dragging &&
             data->movement_count <= 10) {  // Lower event count for shorter taps
 
+            // IMPORTANT: Every single tap should trigger a mouse click
+            // No need to wait for double tap or other conditions
             LOG_WRN("TAP DETECTED with duration %lld ms, %d events - TRIGGERING MOUSE CLICK",
                     total_duration, data->movement_count);
 
             // Trigger a left mouse button click using ZMK's functions
             // Use mouse button 0 for left click (INPUT_BTN_LEFT - INPUT_BTN_LEFT = 0)
             zmk_hid_mouse_button_press(0); // Press left mouse button
-            k_sleep(K_MSEC(150));           // Small delay between press and release
+            k_sleep(K_MSEC(10));           // Longer delay to ensure click is registered
             zmk_hid_mouse_button_release(0); // Release left mouse button
             zmk_endpoints_send_mouse_report(); // Send the mouse report
         } else if (data->is_dragging) {
