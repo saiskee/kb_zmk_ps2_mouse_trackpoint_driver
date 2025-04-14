@@ -1,0 +1,14 @@
+# kb_zmk_ps2_mouse_trackpoint_driver/dts/bindings/zmk,input-listener-tp-small-movement.yaml
+description: |
+  Input listener that detects small trackpoint movements
+
+compatible: "zmk,input-listener-tp-small-movement"
+
+properties:
+  device:
+    type: phandle
+    required: true
+  movement-threshold:
+    type: int
+    default: 3
+    description: "Maximum movement magnitude to be considered 'small'"
