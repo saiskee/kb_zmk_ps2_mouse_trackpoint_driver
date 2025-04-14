@@ -20,6 +20,7 @@ struct small_movement_detector_config {
     const struct device *tracked_device;
     int16_t movement_threshold;
     uint32_t tap_timeout_ms;  // Timeout for tap detection
+    uint32_t double_tap_timeout_ms; // Timeout for double tap detection
 };
 
 // Device data structure
@@ -35,6 +36,10 @@ struct small_movement_detector_data {
     bool potential_tap;               // Flag for potential tap detection
     int64_t last_movement_time_ms;    // Timestamp of last movement
     uint32_t tap_count;               // Count of taps detected
+
+    // Double tap tracking
+    int64_t last_tap_time_ms;         // Timestamp of last tap for double-tap detection
+    uint32_t consecutive_taps;        // Count of consecutive taps within time window
 };
 
 // Initialize the device
@@ -53,9 +58,34 @@ static int small_movement_detector_init(const struct device *dev) {
     data->last_movement_time_ms = 0;
     data->tap_count = 0;
 
-    LOG_INF("Small movement detector initialized with threshold %d, tap timeout %d ms",
-            config->movement_threshold, config->tap_timeout_ms);
+    // Initialize double tap detection
+    data->last_tap_time_ms = 0;
+    data->consecutive_taps = 0;
+
+    LOG_INF("Small movement detector initialized with threshold %d, tap timeout %d ms, double tap timeout %d ms",
+            config->movement_threshold, config->tap_timeout_ms, config->double_tap_timeout_ms);
     return 0;
+}
+
+// Helper function to emit mouse button events
+static void emit_mouse_button_event(uint16_t button_code, uint16_t state) {
+    struct input_event ev = {
+        .type = INPUT_EV_KEY,
+        .code = button_code,
+        .value = state
+    };
+
+    // Log the mouse button event
+    LOG_WRN("Emitting mouse button event: code %d, state %d", button_code, state);
+
+    // Emit the KEY event
+    input_event(&ev);
+
+    // Emit SYNC event
+    ev.type = INPUT_EV_SYN;
+    ev.code = INPUT_SYN_REPORT;
+    ev.value = 0;
+    input_event(&ev);
 }
 
 // Define data and config structure for each instance
@@ -66,6 +96,7 @@ static int small_movement_detector_init(const struct device *dev) {
         .tracked_device = DEVICE_DT_GET(DT_INST_PHANDLE(n, device)), \
         .movement_threshold = DT_INST_PROP_OR(n, movement_threshold, 3), \
         .tap_timeout_ms = DT_INST_PROP_OR(n, tap_timeout_ms, 200), \
+        .double_tap_timeout_ms = DT_INST_PROP_OR(n, double_tap_timeout_ms, 300), \
     }; \
     \
     /* Callback function to handle input events */ \
@@ -100,6 +131,34 @@ static int small_movement_detector_init(const struct device *dev) {
                 if (elapsed_ms >= config->tap_timeout_ms) { \
                     data->tap_count++; \
                     LOG_WRN("**** TRACKPOINT TAP DETECTED (count: %d) ****", data->tap_count); \
+                    \
+                    /* Check for double tap */ \
+                    int64_t tap_interval_ms = current_time_ms - data->last_tap_time_ms; \
+                    \
+                    if (tap_interval_ms <= config->double_tap_timeout_ms) { \
+                        /* This is a consecutive tap within the double-tap time window */ \
+                        data->consecutive_taps++; \
+                        \
+                        if (data->consecutive_taps == 2) { \
+                            /* Double tap detected - emit left mouse button click */ \
+                            LOG_WRN("**** DOUBLE TAP DETECTED - TRIGGERING LEFT MOUSE CLICK ****"); \
+                            \
+                            /* Press and release left mouse button */ \
+                            emit_mouse_button_event(INPUT_BTN_LEFT, 1); /* Press */ \
+                            emit_mouse_button_event(INPUT_BTN_LEFT, 0); /* Release */ \
+                            \
+                            /* Reset consecutive taps after handling */ \
+                            data->consecutive_taps = 0; \
+                        } \
+                    } else { \
+                        /* Too much time between taps, reset consecutive count */ \
+                        LOG_DBG("**** TAP INTERVAL TOO LONG: %lld ms > %d ms ****", \
+                               tap_interval_ms, config->double_tap_timeout_ms); \
+                        data->consecutive_taps = 1; /* This is the first tap of a potential sequence */ \
+                    } \
+                    \
+                    /* Update last tap time for next double-tap detection */ \
+                    data->last_tap_time_ms = current_time_ms; \
                     data->potential_tap = false; \
                 } else { \
                     LOG_DBG("**** NOT A TAP: Recent movements too close together (%lld ms < %d ms) ****", \
