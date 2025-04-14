@@ -101,6 +101,9 @@ static int small_movement_detector_init(const struct device *dev) {
                     data->tap_count++; \
                     LOG_WRN("**** TRACKPOINT TAP DETECTED (count: %d) ****", data->tap_count); \
                     data->potential_tap = false; \
+                } else { \
+                    LOG_DBG("**** NOT A TAP: Recent movements too close together (%lld ms < %d ms) ****", \
+                           elapsed_ms, config->tap_timeout_ms); \
                 } \
             } \
             \
@@ -119,13 +122,21 @@ static int small_movement_detector_init(const struct device *dev) {
                 if (!data->potential_tap) { \
                     data->potential_tap = true; \
                     data->last_movement_time_ms = current_time_ms; \
+                    LOG_DBG("**** POTENTIAL TAP STARTED: Waiting for timeout period ****"); \
                 } else { \
                     /* If there's continuous small movement, it's not a tap */ \
+                    LOG_DBG("**** NOT A TAP: Continuous small movements detected (tracking) ****"); \
                     data->last_movement_time_ms = current_time_ms; \
                 } \
             } else if (data->x_movement != 0 || data->y_movement != 0) { \
                 /* If there's significant movement, cancel any potential tap */ \
-                data->potential_tap = false; \
+                if (data->potential_tap) { \
+                    LOG_DBG("**** NOT A TAP: Movement too large (x=%d, y=%d, threshold=%d) ****", \
+                           data->x_movement, data->y_movement, config->movement_threshold); \
+                    data->potential_tap = false; \
+                } else { \
+                    LOG_DBG("**** NORMAL MOVEMENT: Not small enough for tap detection ****"); \
+                } \
             } \
             \
             /* Reset state for next event */ \
