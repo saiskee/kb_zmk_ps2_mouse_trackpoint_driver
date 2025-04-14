@@ -26,6 +26,7 @@ struct small_movement_detector_config {
     uint32_t drag_threshold_ms;     // Time threshold to consider continuous movement as dragging
     uint32_t cooldown_timeout_ms;   // Cooldown time to consider movement ended
     uint32_t tap_max_duration_ms;   // Maximum duration for a movement to be considered a tap
+    uint32_t double_tap_timeout_ms; // Maximum time between taps to count as double tap
 };
 
 // Device data structure
@@ -40,6 +41,10 @@ struct small_movement_detector_data {
     int64_t last_movement_time_ms;   // When last movement was detected
     bool is_dragging;                // Currently in dragging state
     uint32_t movement_count;         // Count of movement events in current sequence
+
+    // Double tap detection
+    bool last_was_tap;               // Flag indicating the last movement was a tap
+    int64_t last_tap_time_ms;        // Timestamp of the last tap
 
     // Timer for detecting movement end
     struct k_work_delayable movement_end_timer;
@@ -66,14 +71,18 @@ static int small_movement_detector_init(const struct device *dev) {
     data->is_dragging = false;
     data->movement_count = 0;
 
+    // Initialize double tap tracking
+    data->last_was_tap = false;
+    data->last_tap_time_ms = 0;
+
     // Save device reference for timer callback
     data->dev = dev;
 
     // Initialize the timer
     k_work_init_delayable(&data->movement_end_timer, movement_end_timer_callback);
 
-    LOG_INF("Movement detector initialized with drag threshold %d ms, cooldown %d ms, tap max duration %d ms",
-            config->drag_threshold_ms, config->cooldown_timeout_ms, config->tap_max_duration_ms);
+    LOG_INF("Movement detector initialized with drag threshold %d ms, cooldown %d ms, tap max duration %d ms, double tap timeout %d ms",
+            config->drag_threshold_ms, config->cooldown_timeout_ms, config->tap_max_duration_ms, config->double_tap_timeout_ms);
     return 0;
 }
 
@@ -107,25 +116,48 @@ static void movement_end_timer_callback(struct k_work *work) {
             !data->is_dragging &&
             data->movement_count <= 10) {  // Lower event count for shorter taps
 
-            // IMPORTANT: Every single tap should trigger a mouse click
-            // No need to wait for double tap or other conditions
-            LOG_WRN("TAP DETECTED with duration %lld ms, %d events - TRIGGERING MOUSE CLICK",
+            LOG_WRN("TAP DETECTED with duration %lld ms, %d events",
                     total_duration, data->movement_count);
 
-            // Trigger a left mouse button click using ZMK's functions
-            // Use mouse button 0 for left click (INPUT_BTN_LEFT - INPUT_BTN_LEFT = 0)
-            // input_report_key(data->dev, INPUT_BTN_0, 1,
-            //                         buttons_need_reporting == 1 ? true : false, K_FOREVER);
-            zmk_hid_mouse_button_press(0); // Press left mouse button
-            zmk_endpoints_send_mouse_report(); // Send the mouse report
-            k_sleep(K_MSEC(30));           // Longer delay to ensure click is registered
-            zmk_hid_mouse_button_release(0); // Release left mouse button
-            // input_report_key(data->dev, INPUT_BTN_0, 0,
-            //                      buttons_need_reporting == 1 ? true : false, K_FOREVER);
-            zmk_endpoints_send_mouse_report(); // Send the mouse report
+            // Check for double tap
+            if (data->last_was_tap) {
+                int64_t time_between_taps = current_time_ms - data->last_tap_time_ms;
+
+                if (time_between_taps <= config->double_tap_timeout_ms) {
+                    // This is a double tap! Trigger mouse click
+                    LOG_WRN("DOUBLE TAP DETECTED - Time between taps: %lld ms - TRIGGERING MOUSE CLICK",
+                           time_between_taps);
+
+                    // Trigger a left mouse button click
+                    zmk_hid_mouse_button_press(0); // Press left mouse button
+                    zmk_endpoints_send_mouse_report(); // Send the mouse report
+                    k_sleep(K_MSEC(30)); // Delay between press and release
+                    zmk_hid_mouse_button_release(0); // Release left mouse button
+                    zmk_endpoints_send_mouse_report(); // Send the mouse report
+
+                    // Reset double tap tracking after handling
+                    data->last_was_tap = false;
+                } else {
+                    // Too much time between taps, this starts a new sequence
+                    LOG_DBG("Time between taps too long: %lld ms > %d ms",
+                           time_between_taps, config->double_tap_timeout_ms);
+                    data->last_was_tap = true;
+                    data->last_tap_time_ms = current_time_ms;
+                }
+            } else {
+                // First tap, record it for potential double tap
+                data->last_was_tap = true;
+                data->last_tap_time_ms = current_time_ms;
+                LOG_DBG("First tap detected - waiting for potential double tap");
+            }
         } else if (data->is_dragging) {
             LOG_WRN("DRAG ENDED after %lld ms, %d events",
                     total_duration, data->movement_count);
+            // Reset double tap tracking since a drag occurred
+            data->last_was_tap = false;
+        } else {
+            // Not a tap or drag, reset double tap tracking
+            data->last_was_tap = false;
         }
 
         // Reset movement tracking
@@ -170,6 +202,7 @@ static void emit_mouse_button_event(uint16_t button_code, uint16_t state) {
         .drag_threshold_ms = DT_INST_PROP_OR(n, drag_threshold_ms, 300), \
         .cooldown_timeout_ms = DT_INST_PROP_OR(n, cooldown_timeout_ms, 80), \
         .tap_max_duration_ms = DT_INST_PROP_OR(n, tap_max_duration_ms, 100), \
+        .double_tap_timeout_ms = DT_INST_PROP_OR(n, double_tap_timeout_ms, 300), \
     }; \
     \
     /* Callback function to handle input events */ \
