@@ -26,6 +26,9 @@ struct small_movement_detector_data {
     int16_t x_movement;
     int16_t y_movement;
     bool pending_sync;
+
+    // Debugging helpers
+    uint32_t detection_count;
 };
 
 // Initialize the device
@@ -37,6 +40,7 @@ static int small_movement_detector_init(const struct device *dev) {
     data->x_movement = 0;
     data->y_movement = 0;
     data->pending_sync = false;
+    data->detection_count = 0;
 
     LOG_INF("Small movement detector initialized with threshold %d", config->movement_threshold);
     return 0;
@@ -57,8 +61,10 @@ static int small_movement_detector_init(const struct device *dev) {
         const struct small_movement_detector_config *config = dev->config; \
         struct small_movement_detector_data *data = dev->data; \
         \
-        /* Only process relative movement events */ \
+        /* Log each event type we receive */ \
         if (evt->type == INPUT_EV_REL) { \
+            LOG_DBG("**** TP SMALL DETECTOR: Received REL event, code %d, value %d", evt->code, evt->value); \
+            \
             /* Track X/Y movement */ \
             if (evt->code == INPUT_REL_X) { \
                 data->x_movement = evt->value; \
@@ -71,12 +77,16 @@ static int small_movement_detector_init(const struct device *dev) {
         \
         /* Process movement data on sync events */ \
         if (evt->sync && data->pending_sync) { \
+            LOG_DBG("**** TP SMALL DETECTOR: Processing SYNC event with x=%d, y=%d", \
+                   data->x_movement, data->y_movement); \
+            \
             /* Check if the movement is small (non-zero but below threshold) */ \
             if ((abs(data->x_movement) > 0 || abs(data->y_movement) > 0) && \
                 abs(data->x_movement) <= config->movement_threshold && \
                 abs(data->y_movement) <= config->movement_threshold) { \
-                LOG_INF("SMALL TRACKPOINT MOVEMENT DETECTED: x=%d, y=%d", \
-                      data->x_movement, data->y_movement); \
+                data->detection_count++; \
+                LOG_WRN("**** SMALL TRACKPOINT MOVEMENT DETECTED: x=%d, y=%d (count: %d) ****", \
+                      data->x_movement, data->y_movement, data->detection_count); \
             } \
             \
             /* Reset state for next event */ \
