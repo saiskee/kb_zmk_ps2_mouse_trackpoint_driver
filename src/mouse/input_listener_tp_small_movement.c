@@ -132,14 +132,12 @@ static void emit_mouse_button_event(uint16_t button_code, uint16_t state) {
         if (evt->sync && data->pending_sync) { \
             LOG_DBG("**** TP SMALL DETECTOR: Processing SYNC event with x=%d, y=%d", \
                    data->x_movement, data->y_movement); \
-
             /* Set potential tap flag if any movement is detected */ \
             if ((data->x_movement != 0 || data->y_movement != 0) && !data->potential_tap) { \
                 data->potential_tap = true; \
                 data->last_movement_time_ms = current_time_ms; \
                 LOG_DBG("**** POTENTIAL TAP STARTED: Waiting for timeout period ****"); \
             } \
-
             /* Check if there was a previous potential tap that timed out */ \
             if (data->potential_tap) { \
                 int64_t elapsed_ms = current_time_ms - data->last_movement_time_ms; \
