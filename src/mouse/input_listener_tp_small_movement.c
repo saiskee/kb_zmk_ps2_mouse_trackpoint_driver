@@ -23,8 +23,9 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 struct small_movement_detector_config {
     const struct device *tracked_device;
     int16_t movement_threshold;
-    uint32_t tap_timeout_ms;  // Timeout for tap detection
-    uint32_t double_tap_timeout_ms; // Timeout for double tap detection
+    uint32_t drag_threshold_ms;     // Time threshold to consider continuous movement as dragging
+    uint32_t cooldown_timeout_ms;   // Cooldown time to consider movement ended
+    uint32_t tap_max_duration_ms;   // Maximum duration for a movement to be considered a tap
 };
 
 // Device data structure
@@ -33,18 +34,12 @@ struct small_movement_detector_data {
     int16_t y_movement;
     bool pending_sync;
 
-    // Debugging helpers
-    uint32_t detection_count;
-
-    // Tap detection
-    bool potential_tap;               // Flag for potential tap detection
-    int64_t last_movement_time_ms;    // Timestamp of last movement
-    uint32_t tap_count;               // Count of taps detected
-    bool is_dragging;                 // Flag to indicate continuous movement/dragging
-
-    // Double tap tracking
-    int64_t last_tap_time_ms;         // Timestamp of last tap for double-tap detection
-    uint32_t consecutive_taps;        // Count of consecutive taps within time window
+    // Movement tracking
+    bool is_moving;                  // Currently receiving movement events
+    int64_t first_movement_time_ms;  // When movement started
+    int64_t last_movement_time_ms;   // When last movement was detected
+    bool is_dragging;                // Currently in dragging state
+    uint32_t movement_count;         // Count of movement events in current sequence
 };
 
 // Initialize the device
@@ -56,20 +51,16 @@ static int small_movement_detector_init(const struct device *dev) {
     data->x_movement = 0;
     data->y_movement = 0;
     data->pending_sync = false;
-    data->detection_count = 0;
 
-    // Initialize tap detection
-    data->potential_tap = false;
+    // Initialize movement tracking
+    data->is_moving = false;
+    data->first_movement_time_ms = 0;
     data->last_movement_time_ms = 0;
-    data->tap_count = 0;
     data->is_dragging = false;
+    data->movement_count = 0;
 
-    // Initialize double tap detection
-    data->last_tap_time_ms = 0;
-    data->consecutive_taps = 0;
-
-    LOG_INF("Small movement detector initialized with threshold %d, tap timeout %d ms, double tap timeout %d ms",
-            config->movement_threshold, config->tap_timeout_ms, config->double_tap_timeout_ms);
+    LOG_INF("Movement detector initialized with drag threshold %d ms, cooldown %d ms, tap max duration %d ms",
+            config->drag_threshold_ms, config->cooldown_timeout_ms, config->tap_max_duration_ms);
     return 0;
 }
 
@@ -105,8 +96,9 @@ static void emit_mouse_button_event(uint16_t button_code, uint16_t state) {
     static const struct small_movement_detector_config small_movement_detector_config_##n = { \
         .tracked_device = DEVICE_DT_GET(DT_INST_PHANDLE(n, device)), \
         .movement_threshold = DT_INST_PROP_OR(n, movement_threshold, 3), \
-        .tap_timeout_ms = DT_INST_PROP_OR(n, tap_timeout_ms, 200), \
-        .double_tap_timeout_ms = DT_INST_PROP_OR(n, double_tap_timeout_ms, 300), \
+        .drag_threshold_ms = DT_INST_PROP_OR(n, drag_threshold_ms, 300), \
+        .cooldown_timeout_ms = DT_INST_PROP_OR(n, cooldown_timeout_ms, 200), \
+        .tap_max_duration_ms = DT_INST_PROP_OR(n, tap_max_duration_ms, 200), \
     }; \
     \
     /* Callback function to handle input events */ \
@@ -118,7 +110,7 @@ static void emit_mouse_button_event(uint16_t button_code, uint16_t state) {
         \
         /* Log each event type we receive */ \
         if (evt->type == INPUT_EV_REL) { \
-            LOG_DBG("**** TP SMALL DETECTOR: Received REL event, code %d, value %d", evt->code, evt->value); \
+            LOG_DBG("Received REL event, code %d, value %d", evt->code, evt->value); \
             \
             /* Track X/Y movement */ \
             if (evt->code == INPUT_REL_X) { \
@@ -132,78 +124,54 @@ static void emit_mouse_button_event(uint16_t button_code, uint16_t state) {
         \
         /* Process movement data on sync events */ \
         if (evt->sync && data->pending_sync) { \
-            LOG_DBG("**** TP SMALL DETECTOR: Processing SYNC event with x=%d, y=%d", \
-                   data->x_movement, data->y_movement); \
-            /* Track continuous movement to detect drags vs taps */ \
+            /* If movement is detected */ \
             if (data->x_movement != 0 || data->y_movement != 0) { \
-                if (!data->potential_tap && !data->is_dragging) { \
-                    /* First movement, start tracking potential tap */ \
-                    data->potential_tap = true; \
-                    data->last_movement_time_ms = current_time_ms; \
-                    LOG_DBG("**** POTENTIAL TAP STARTED: Waiting for timeout period ****"); \
+                /* If this is the start of a new movement sequence */ \
+                if (!data->is_moving) { \
+                    data->is_moving = true; \
+                    data->first_movement_time_ms = current_time_ms; \
+                    data->movement_count = 1; \
+                    LOG_INF("Movement started at %lld ms", current_time_ms); \
                 } else { \
-                    /* Check if this is a drag (multiple movements close together) */ \
-                    int64_t time_since_last = current_time_ms - data->last_movement_time_ms; \
+                    data->movement_count++; \
                     \
-                    /* If we're getting continuous movement within a short time, this is a drag */ \
-                    if (time_since_last < 50) { /* Threshold for continuous movement */ \
+                    /* Check if we've been moving long enough to be considered dragging */ \
+                    int64_t movement_duration = current_time_ms - data->first_movement_time_ms; \
+                    if (!data->is_dragging && movement_duration > config->drag_threshold_ms) { \
                         data->is_dragging = true; \
-                        data->potential_tap = false; /* Cancel any potential tap */ \
-                        LOG_DBG("**** DRAG DETECTED - CANCELLING POTENTIAL TAP ****"); \
+                        LOG_WRN("DRAG DETECTED after %lld ms with %d movements", \
+                               movement_duration, data->movement_count); \
                     } \
-                    \
-                    /* Update timestamp for next movement detection */ \
-                    data->last_movement_time_ms = current_time_ms; \
                 } \
+                \
+                /* Update last movement time */ \
+                data->last_movement_time_ms = current_time_ms; \
             } else { \
-                /* No movement, check if dragging has stopped */ \
-                if (data->is_dragging) { \
-                    int64_t time_since_last = current_time_ms - data->last_movement_time_ms; \
-                    if (time_since_last > 200) { /* Time threshold to exit drag mode */ \
-                        data->is_dragging = false; \
-                        LOG_DBG("**** DRAG ENDED ****"); \
-                    } \
-                } \
-            } \
-            \
-            /* Check if there was a previous potential tap that timed out */ \
-            if (data->potential_tap) { \
-                int64_t elapsed_ms = current_time_ms - data->last_movement_time_ms; \
-                if (elapsed_ms >= config->tap_timeout_ms) { \
-                    data->tap_count++; \
-                    LOG_WRN("**** TRACKPOINT TAP DETECTED (count: %d) ****", data->tap_count); \
+                /* Check if movement has stopped (cooldown period) */ \
+                if (data->is_moving) { \
+                    int64_t time_since_last_move = current_time_ms - data->last_movement_time_ms; \
                     \
-                    /* Check for double tap */ \
-                    int64_t tap_interval_ms = current_time_ms - data->last_tap_time_ms; \
-                    \
-                    if (tap_interval_ms <= config->double_tap_timeout_ms) { \
-                        /* This is a consecutive tap within the double-tap time window */ \
-                        data->consecutive_taps++; \
+                    if (time_since_last_move >= config->cooldown_timeout_ms) { \
+                        /* Movement has ended after cooldown */ \
+                        int64_t total_duration = data->last_movement_time_ms - data->first_movement_time_ms; \
                         \
-                        if (data->consecutive_taps == 2) { \
-                            /* Double tap detected - emit left mouse button click */ \
-                            LOG_WRN("**** DOUBLE TAP DETECTED - TRIGGERING LEFT MOUSE CLICK ****"); \
-                            \
-                            /* Press and release left mouse button */ \
-                            emit_mouse_button_event(INPUT_BTN_LEFT, 1); /* Press */ \
-                            emit_mouse_button_event(INPUT_BTN_LEFT, 0); /* Release */ \
-                            \
-                            /* Reset consecutive taps after handling */ \
-                            data->consecutive_taps = 0; \
+                        LOG_INF("Movement ended. Duration: %lld ms, Events: %d", \
+                               total_duration, data->movement_count); \
+                        \
+                        /* Check if this was a tap (short duration movement) */ \
+                        if (total_duration <= config->tap_max_duration_ms && !data->is_dragging) { \
+                            LOG_WRN("TAP DETECTED with duration %lld ms, %d events", \
+                                   total_duration, data->movement_count); \
+                        } else if (data->is_dragging) { \
+                            LOG_WRN("DRAG ENDED after %lld ms, %d events", \
+                                   total_duration, data->movement_count); \
                         } \
-                    } else { \
-                        /* Too much time between taps, reset consecutive count */ \
-                        LOG_DBG("**** TAP INTERVAL TOO LONG: %lld ms > %d ms ****", \
-                               tap_interval_ms, config->double_tap_timeout_ms); \
-                        data->consecutive_taps = 1; /* This is the first tap of a potential sequence */ \
+                        \
+                        /* Reset movement tracking */ \
+                        data->is_moving = false; \
+                        data->is_dragging = false; \
+                        data->movement_count = 0; \
                     } \
-                    \
-                    /* Update last tap time for next double-tap detection */ \
-                    data->last_tap_time_ms = current_time_ms; \
-                    data->potential_tap = false; \
-                } else { \
-                    LOG_DBG("**** NOT A TAP: Recent movements too close together (%lld ms < %d ms) ****", \
-                           elapsed_ms, config->tap_timeout_ms); \
                 } \
             } \
             \
