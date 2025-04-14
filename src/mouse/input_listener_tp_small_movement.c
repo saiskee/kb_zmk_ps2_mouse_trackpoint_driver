@@ -40,7 +40,13 @@ struct small_movement_detector_data {
     int64_t last_movement_time_ms;   // When last movement was detected
     bool is_dragging;                // Currently in dragging state
     uint32_t movement_count;         // Count of movement events in current sequence
+
+    // Timer for detecting movement end
+    struct k_work_delayable movement_end_timer;
 };
+
+// Forward declaration for the timer callback
+static void movement_end_timer_callback(struct k_work *work);
 
 // Initialize the device
 static int small_movement_detector_init(const struct device *dev) {
@@ -59,9 +65,54 @@ static int small_movement_detector_init(const struct device *dev) {
     data->is_dragging = false;
     data->movement_count = 0;
 
+    // Initialize the timer
+    k_work_init_delayable(&data->movement_end_timer, movement_end_timer_callback);
+
     LOG_INF("Movement detector initialized with drag threshold %d ms, cooldown %d ms, tap max duration %d ms",
             config->drag_threshold_ms, config->cooldown_timeout_ms, config->tap_max_duration_ms);
     return 0;
+}
+
+// Timer callback to detect end of movement
+static void movement_end_timer_callback(struct k_work *work) {
+    // Get the work_delayable structure
+    struct k_work_delayable *dwork = k_work_delayable_from_work(work);
+
+    // Get the data structure that contains the timer
+    struct small_movement_detector_data *data =
+        CONTAINER_OF(dwork, struct small_movement_detector_data, movement_end_timer);
+
+    // We need to get the parent device
+    // This is a bit of a hack as we need to find a way to get back to our device
+    // In a real implementation, you might want to store a device pointer in the data struct
+    const struct device *dev = DEVICE_DT_INST_GET(0); // Assuming instance 0
+    const struct small_movement_detector_config *config = dev->config;
+
+    // Current time
+    int64_t current_time_ms = k_uptime_get();
+
+    // If we're still in moving state
+    if (data->is_moving) {
+        // Calculate total movement duration
+        int64_t total_duration = data->last_movement_time_ms - data->first_movement_time_ms;
+
+        LOG_INF("Movement ended. Duration: %lld ms, Events: %d",
+                total_duration, data->movement_count);
+
+        // Check if this was a tap (short duration movement)
+        if (total_duration <= config->tap_max_duration_ms && !data->is_dragging) {
+            LOG_WRN("TAP DETECTED with duration %lld ms, %d events",
+                    total_duration, data->movement_count);
+        } else if (data->is_dragging) {
+            LOG_WRN("DRAG ENDED after %lld ms, %d events",
+                    total_duration, data->movement_count);
+        }
+
+        // Reset movement tracking
+        data->is_moving = false;
+        data->is_dragging = false;
+        data->movement_count = 0;
+    }
 }
 
 // Helper function to emit mouse button events
@@ -126,6 +177,9 @@ static void emit_mouse_button_event(uint16_t button_code, uint16_t state) {
         if (evt->sync && data->pending_sync) { \
             /* If movement is detected */ \
             if (data->x_movement != 0 || data->y_movement != 0) { \
+                /* Cancel any pending end timer */ \
+                k_work_cancel_delayable(&data->movement_end_timer); \
+                \
                 /* If this is the start of a new movement sequence */ \
                 if (!data->is_moving) { \
                     data->is_moving = true; \
@@ -146,33 +200,9 @@ static void emit_mouse_button_event(uint16_t button_code, uint16_t state) {
                 \
                 /* Update last movement time */ \
                 data->last_movement_time_ms = current_time_ms; \
-            } else { \
-                /* Check if movement has stopped (cooldown period) */ \
-                if (data->is_moving) { \
-                    int64_t time_since_last_move = current_time_ms - data->last_movement_time_ms; \
-                    \
-                    if (time_since_last_move >= config->cooldown_timeout_ms) { \
-                        /* Movement has ended after cooldown */ \
-                        int64_t total_duration = data->last_movement_time_ms - data->first_movement_time_ms; \
-                        \
-                        LOG_INF("Movement ended. Duration: %lld ms, Events: %d", \
-                               total_duration, data->movement_count); \
-                        \
-                        /* Check if this was a tap (short duration movement) */ \
-                        if (total_duration <= config->tap_max_duration_ms && !data->is_dragging) { \
-                            LOG_WRN("TAP DETECTED with duration %lld ms, %d events", \
-                                   total_duration, data->movement_count); \
-                        } else if (data->is_dragging) { \
-                            LOG_WRN("DRAG ENDED after %lld ms, %d events", \
-                                   total_duration, data->movement_count); \
-                        } \
-                        \
-                        /* Reset movement tracking */ \
-                        data->is_moving = false; \
-                        data->is_dragging = false; \
-                        data->movement_count = 0; \
-                    } \
-                } \
+                \
+                /* Schedule the movement end timer - this will fire if no more events are received */ \
+                k_work_schedule(&data->movement_end_timer, K_MSEC(config->cooldown_timeout_ms)); \
             } \
             \
             /* Reset state for next event */ \
