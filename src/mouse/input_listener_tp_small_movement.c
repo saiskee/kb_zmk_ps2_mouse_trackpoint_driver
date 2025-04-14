@@ -17,7 +17,6 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 // ZMK includes for mouse button handling
 #include <zmk/endpoints.h>
-#include <zmk/mouse/types.h>
 #include <zmk/mouse/hid.h>
 
 // Device configuration structure
