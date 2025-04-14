@@ -110,10 +110,12 @@ static void movement_end_timer_callback(struct k_work *work) {
             LOG_WRN("TAP DETECTED with duration %lld ms, %d events - TRIGGERING MOUSE CLICK",
                     total_duration, data->movement_count);
 
-            // Trigger a left mouse button click
-            emit_mouse_button_event(INPUT_BTN_LEFT, 1); /* Press */
-            k_sleep(K_MSEC(10)); // Small delay between press and release for stability
-            emit_mouse_button_event(INPUT_BTN_LEFT, 0); /* Release */
+            // Trigger a left mouse button click using ZMK's functions
+            // Use mouse button 0 for left click (INPUT_BTN_LEFT - INPUT_BTN_LEFT = 0)
+            zmk_hid_mouse_button_press(0); // Press left mouse button
+            k_sleep(K_MSEC(10));           // Small delay between press and release
+            zmk_hid_mouse_button_release(0); // Release left mouse button
+            zmk_endpoints_send_mouse_report(); // Send the mouse report
         } else if (data->is_dragging) {
             LOG_WRN("DRAG ENDED after %lld ms, %d events",
                     total_duration, data->movement_count);
