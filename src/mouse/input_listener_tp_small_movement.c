@@ -107,12 +107,13 @@ static void movement_end_timer_callback(struct k_work *work) {
             !data->is_dragging &&
             data->movement_count <= 15) {  // Limit number of events for a tap
 
-            LOG_WRN("TAP DETECTED with duration %lld ms, %d events",
+            LOG_WRN("TAP DETECTED with duration %lld ms, %d events - TRIGGERING MOUSE CLICK",
                     total_duration, data->movement_count);
 
-            // Here you could trigger a mouse click if desired
-            // emit_mouse_button_event(INPUT_BTN_LEFT, 1); /* Press */
-            // emit_mouse_button_event(INPUT_BTN_LEFT, 0); /* Release */
+            // Trigger a left mouse button click
+            emit_mouse_button_event(INPUT_BTN_LEFT, 1); /* Press */
+            k_sleep(K_MSEC(10)); // Small delay between press and release for stability
+            emit_mouse_button_event(INPUT_BTN_LEFT, 0); /* Release */
         } else if (data->is_dragging) {
             LOG_WRN("DRAG ENDED after %lld ms, %d events",
                     total_duration, data->movement_count);
