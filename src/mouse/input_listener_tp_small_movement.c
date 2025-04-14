@@ -14,7 +14,7 @@
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #include <zephyr/dt-bindings/input/input-event-codes.h>
-#include <zmk/mouse/types.h>
+// #include <zmk/mouse/types.h>
 
 #define VALID_LISTENER_COUNT 1
 
