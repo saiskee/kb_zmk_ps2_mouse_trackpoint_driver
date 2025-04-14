@@ -102,10 +102,10 @@ static void movement_end_timer_callback(struct k_work *work) {
                 total_duration, data->movement_count);
 
         // Check if this was a tap (short duration movement)
-        // A tap should be a short duration movement with relatively few events
+        // A tap should be a very short duration movement (≤60ms) with few events
         if (total_duration <= config->tap_max_duration_ms &&
             !data->is_dragging &&
-            data->movement_count <= 15) {  // Limit number of events for a tap
+            data->movement_count <= 10) {  // Lower event count for shorter taps
 
             LOG_WRN("TAP DETECTED with duration %lld ms, %d events - TRIGGERING MOUSE CLICK",
                     total_duration, data->movement_count);
@@ -160,9 +160,9 @@ static void emit_mouse_button_event(uint16_t button_code, uint16_t state) {
     static const struct small_movement_detector_config small_movement_detector_config_##n = { \
         .tracked_device = DEVICE_DT_GET(DT_INST_PHANDLE(n, device)), \
         .movement_threshold = DT_INST_PROP_OR(n, movement_threshold, 3), \
-        .drag_threshold_ms = DT_INST_PROP_OR(n, drag_threshold_ms, 400), \
-        .cooldown_timeout_ms = DT_INST_PROP_OR(n, cooldown_timeout_ms, 100), \
-        .tap_max_duration_ms = DT_INST_PROP_OR(n, tap_max_duration_ms, 300), \
+        .drag_threshold_ms = DT_INST_PROP_OR(n, drag_threshold_ms, 300), \
+        .cooldown_timeout_ms = DT_INST_PROP_OR(n, cooldown_timeout_ms, 80), \
+        .tap_max_duration_ms = DT_INST_PROP_OR(n, tap_max_duration_ms, 100), \
     }; \
     \
     /* Callback function to handle input events */ \
