@@ -19,6 +19,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 struct small_movement_detector_config {
     const struct device *tracked_device;
     int16_t movement_threshold;
+    uint32_t tap_timeout_ms;  // Timeout for tap detection
 };
 
 // Device data structure
@@ -29,6 +30,11 @@ struct small_movement_detector_data {
 
     // Debugging helpers
     uint32_t detection_count;
+
+    // Tap detection
+    bool potential_tap;               // Flag for potential tap detection
+    int64_t last_movement_time_ms;    // Timestamp of last movement
+    uint32_t tap_count;               // Count of taps detected
 };
 
 // Initialize the device
@@ -42,7 +48,13 @@ static int small_movement_detector_init(const struct device *dev) {
     data->pending_sync = false;
     data->detection_count = 0;
 
-    LOG_INF("Small movement detector initialized with threshold %d", config->movement_threshold);
+    // Initialize tap detection
+    data->potential_tap = false;
+    data->last_movement_time_ms = 0;
+    data->tap_count = 0;
+
+    LOG_INF("Small movement detector initialized with threshold %d, tap timeout %d ms",
+            config->movement_threshold, config->tap_timeout_ms);
     return 0;
 }
 
@@ -53,6 +65,7 @@ static int small_movement_detector_init(const struct device *dev) {
     static const struct small_movement_detector_config small_movement_detector_config_##n = { \
         .tracked_device = DEVICE_DT_GET(DT_INST_PHANDLE(n, device)), \
         .movement_threshold = DT_INST_PROP_OR(n, movement_threshold, 3), \
+        .tap_timeout_ms = DT_INST_PROP_OR(n, tap_timeout_ms, 200), \
     }; \
     \
     /* Callback function to handle input events */ \
@@ -60,6 +73,7 @@ static int small_movement_detector_init(const struct device *dev) {
         const struct device *dev = DEVICE_DT_INST_GET(n); \
         const struct small_movement_detector_config *config = dev->config; \
         struct small_movement_detector_data *data = dev->data; \
+        int64_t current_time_ms = k_uptime_get(); \
         \
         /* Log each event type we receive */ \
         if (evt->type == INPUT_EV_REL) { \
@@ -80,13 +94,38 @@ static int small_movement_detector_init(const struct device *dev) {
             LOG_DBG("**** TP SMALL DETECTOR: Processing SYNC event with x=%d, y=%d", \
                    data->x_movement, data->y_movement); \
             \
+            /* Check if there was a previous potential tap that timed out */ \
+            if (data->potential_tap) { \
+                int64_t elapsed_ms = current_time_ms - data->last_movement_time_ms; \
+                if (elapsed_ms >= config->tap_timeout_ms) { \
+                    data->tap_count++; \
+                    LOG_WRN("**** TRACKPOINT TAP DETECTED (count: %d) ****", data->tap_count); \
+                    data->potential_tap = false; \
+                } \
+            } \
+            \
             /* Check if the movement is small (non-zero but below threshold) */ \
-            if ((abs(data->x_movement) > 0 || abs(data->y_movement) > 0) && \
-                abs(data->x_movement) <= config->movement_threshold && \
-                abs(data->y_movement) <= config->movement_threshold) { \
+            bool is_small_movement = (abs(data->x_movement) > 0 || abs(data->y_movement) > 0) && \
+                                     abs(data->x_movement) <= config->movement_threshold && \
+                                     abs(data->y_movement) <= config->movement_threshold; \
+            \
+            if (is_small_movement) { \
                 data->detection_count++; \
-                LOG_WRN("**** SMALL TRACKPOINT MOVEMENT DETECTED: x=%d, y=%d (count: %d) ****", \
-                      data->x_movement, data->y_movement, data->detection_count); \
+                LOG_DBG("**** SMALL TRACKPOINT MOVEMENT DETECTED: x=%d, y=%d (count: %d) ****", \
+                       data->x_movement, data->y_movement, data->detection_count); \
+                \
+                /* If this is a small movement and there was no recent potential tap, */ \
+                /* mark it as a potential tap */ \
+                if (!data->potential_tap) { \
+                    data->potential_tap = true; \
+                    data->last_movement_time_ms = current_time_ms; \
+                } else { \
+                    /* If there's continuous small movement, it's not a tap */ \
+                    data->last_movement_time_ms = current_time_ms; \
+                } \
+            } else if (data->x_movement != 0 || data->y_movement != 0) { \
+                /* If there's significant movement, cancel any potential tap */ \
+                data->potential_tap = false; \
             } \
             \
             /* Reset state for next event */ \
