@@ -43,6 +43,7 @@ struct small_movement_detector_data {
 
     // Timer for detecting movement end
     struct k_work_delayable movement_end_timer;
+    const struct device *dev;        // Reference to parent device for timer callback
 };
 
 // Forward declaration for the timer callback
@@ -65,6 +66,9 @@ static int small_movement_detector_init(const struct device *dev) {
     data->is_dragging = false;
     data->movement_count = 0;
 
+    // Save device reference for timer callback
+    data->dev = dev;
+
     // Initialize the timer
     k_work_init_delayable(&data->movement_end_timer, movement_end_timer_callback);
 
@@ -82,10 +86,8 @@ static void movement_end_timer_callback(struct k_work *work) {
     struct small_movement_detector_data *data =
         CONTAINER_OF(dwork, struct small_movement_detector_data, movement_end_timer);
 
-    // We need to get the parent device
-    // This is a bit of a hack as we need to find a way to get back to our device
-    // In a real implementation, you might want to store a device pointer in the data struct
-    const struct device *dev = DEVICE_DT_INST_GET(0); // Assuming instance 0
+    // Get the device reference that was stored in the data structure
+    const struct device *dev = data->dev;
     const struct small_movement_detector_config *config = dev->config;
 
     // Current time
