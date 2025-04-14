@@ -132,7 +132,14 @@ static void emit_mouse_button_event(uint16_t button_code, uint16_t state) {
         if (evt->sync && data->pending_sync) { \
             LOG_DBG("**** TP SMALL DETECTOR: Processing SYNC event with x=%d, y=%d", \
                    data->x_movement, data->y_movement); \
-            \
+
+            /* Set potential tap flag if any movement is detected */
+            if ((data->x_movement != 0 || data->y_movement != 0) && !data->potential_tap) {
+                data->potential_tap = true;
+                data->last_movement_time_ms = current_time_ms;
+                LOG_DBG("**** POTENTIAL TAP STARTED: Waiting for timeout period ****");
+            }
+
             /* Check if there was a previous potential tap that timed out */ \
             if (data->potential_tap) { \
                 int64_t elapsed_ms = current_time_ms - data->last_movement_time_ms; \
@@ -171,38 +178,6 @@ static void emit_mouse_button_event(uint16_t button_code, uint16_t state) {
                 } else { \
                     LOG_DBG("**** NOT A TAP: Recent movements too close together (%lld ms < %d ms) ****", \
                            elapsed_ms, config->tap_timeout_ms); \
-                } \
-            } \
-            \
-            /* Check if the movement is small (non-zero but below threshold) */ \
-            bool is_small_movement = (abs(data->x_movement) > 0 || abs(data->y_movement) > 0) && \
-                                     abs(data->x_movement) <= config->movement_threshold && \
-                                     abs(data->y_movement) <= config->movement_threshold; \
-            \
-            if (is_small_movement) { \
-                data->detection_count++; \
-                LOG_DBG("**** SMALL TRACKPOINT MOVEMENT DETECTED: x=%d, y=%d (count: %d) ****", \
-                       data->x_movement, data->y_movement, data->detection_count); \
-                \
-                /* If this is a small movement and there was no recent potential tap, */ \
-                /* mark it as a potential tap */ \
-                if (!data->potential_tap) { \
-                    data->potential_tap = true; \
-                    data->last_movement_time_ms = current_time_ms; \
-                    LOG_DBG("**** POTENTIAL TAP STARTED: Waiting for timeout period ****"); \
-                } else { \
-                    /* If there's continuous small movement, it's not a tap */ \
-                    LOG_DBG("**** NOT A TAP: Continuous small movements detected (tracking) ****"); \
-                    data->last_movement_time_ms = current_time_ms; \
-                } \
-            } else if (data->x_movement != 0 || data->y_movement != 0) { \
-                /* If there's significant movement, cancel any potential tap */ \
-                if (data->potential_tap) { \
-                    LOG_DBG("**** NOT A TAP: Movement too large (x=%d, y=%d, threshold=%d) ****", \
-                           data->x_movement, data->y_movement, config->movement_threshold); \
-                    data->potential_tap = false; \
-                } else { \
-                    LOG_DBG("**** NORMAL MOVEMENT: Not small enough for tap detection ****"); \
                 } \
             } \
             \
