@@ -132,11 +132,22 @@ static void emit_mouse_button_event(uint16_t button_code, uint16_t state) {
         if (evt->sync && data->pending_sync) { \
             LOG_DBG("**** TP SMALL DETECTOR: Processing SYNC event with x=%d, y=%d", \
                    data->x_movement, data->y_movement); \
-            /* Set potential tap flag if any movement is detected */ \
-            if ((data->x_movement != 0 || data->y_movement != 0) && !data->potential_tap) { \
-                data->potential_tap = true; \
-                data->last_movement_time_ms = current_time_ms; \
-                LOG_DBG("**** POTENTIAL TAP STARTED: Waiting for timeout period ****"); \
+            /* Track continuous movement to detect drags vs taps */ \
+            if (data->x_movement != 0 || data->y_movement != 0) { \
+                if (!data->potential_tap) { \
+                    /* First movement, start tracking potential tap */ \
+                    data->potential_tap = true; \
+                    data->last_movement_time_ms = current_time_ms; \
+                    LOG_DBG("**** POTENTIAL TAP STARTED: Waiting for timeout period ****"); \
+                } else { \
+                    /* Continuous movement - this is likely a drag, not a tap */ \
+                    /* Only reset the timestamp if significant time has passed to avoid constant resets */ \
+                    int64_t time_since_last = current_time_ms - data->last_movement_time_ms; \
+                    if (time_since_last > 20) { /* Small buffer for consecutive events */ \
+                        data->last_movement_time_ms = current_time_ms; \
+                        LOG_DBG("**** CONTINUOUS MOVEMENT DETECTED - LIKELY DRAG, NOT TAP ****"); \
+                    } \
+                } \
             } \
             /* Check if there was a previous potential tap that timed out */ \
             if (data->potential_tap) { \
