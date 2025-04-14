@@ -15,6 +15,11 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 
+// ZMK includes for mouse button handling
+#include <zmk/endpoints.h>
+#include <zmk/mouse/types.h>
+#include <zmk/mouse/hid.h>
+
 // Device configuration structure
 struct small_movement_detector_config {
     const struct device *tracked_device;
@@ -69,21 +74,27 @@ static int small_movement_detector_init(const struct device *dev) {
 
 // Helper function to emit mouse button events
 static void emit_mouse_button_event(uint16_t button_code, uint16_t state) {
-    const struct device *dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_keyboard_output));
-
-    if (!device_is_ready(dev)) {
-        LOG_ERR("Keyboard output device not ready");
-        return;
-    }
-
     // Log the mouse button event
     LOG_WRN("Emitting mouse button event: code %d, state %d", button_code, state);
 
-    // Report the KEY event
-    input_report_key(dev, button_code, state);
+    // Convert button code to ZMK mouse button index (0-based)
+    // Button codes from INPUT_BTN_LEFT (0x110) start at 0x110
+    int button_idx = button_code - INPUT_BTN_LEFT;
 
-    // Report SYNC event
-    input_sync(dev);
+    if (button_idx < 0 || button_idx >= ZMK_MOUSE_HID_NUM_BUTTONS) {
+        LOG_ERR("Invalid button index: %d", button_idx);
+        return;
+    }
+
+    // Press or release the mouse button
+    if (state) {
+        zmk_hid_mouse_button_press(button_idx);
+    } else {
+        zmk_hid_mouse_button_release(button_idx);
+    }
+
+    // Send the mouse report
+    zmk_endpoints_send_mouse_report();
 }
 
 // Define data and config structure for each instance
