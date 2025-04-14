@@ -69,23 +69,21 @@ static int small_movement_detector_init(const struct device *dev) {
 
 // Helper function to emit mouse button events
 static void emit_mouse_button_event(uint16_t button_code, uint16_t state) {
-    struct input_event ev = {
-        .type = INPUT_EV_KEY,
-        .code = button_code,
-        .value = state
-    };
+    const struct device *dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_keyboard_output));
+
+    if (!device_is_ready(dev)) {
+        LOG_ERR("Keyboard output device not ready");
+        return;
+    }
 
     // Log the mouse button event
     LOG_WRN("Emitting mouse button event: code %d, state %d", button_code, state);
 
-    // Emit the KEY event
-    input_event(&ev);
+    // Report the KEY event
+    input_report_key(dev, button_code, state);
 
-    // Emit SYNC event
-    ev.type = INPUT_EV_SYN;
-    ev.code = INPUT_SYN_REPORT;
-    ev.value = 0;
-    input_event(&ev);
+    // Report SYNC event
+    input_sync(dev);
 }
 
 // Define data and config structure for each instance
