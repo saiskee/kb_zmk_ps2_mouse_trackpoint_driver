@@ -28,41 +28,6 @@ struct small_movement_detector_data {
     bool pending_sync;
 };
 
-// Callback function to handle input events
-static void small_movement_handler(struct input_event *evt, void *user_data) {
-    const struct device *dev = (const struct device *)user_data;
-    const struct small_movement_detector_config *config = dev->config;
-    struct small_movement_detector_data *data = dev->data;
-
-    // Only process relative movement events
-    if (evt->type == INPUT_EV_REL) {
-        // Track X/Y movement
-        if (evt->code == INPUT_REL_X) {
-            data->x_movement = evt->value;
-            data->pending_sync = true;
-        } else if (evt->code == INPUT_REL_Y) {
-            data->y_movement = evt->value;
-            data->pending_sync = true;
-        }
-    }
-
-    // Process movement data on sync events
-    if (evt->sync && data->pending_sync) {
-        // Check if the movement is small (non-zero but below threshold)
-        if ((abs(data->x_movement) > 0 || abs(data->y_movement) > 0) &&
-            abs(data->x_movement) <= config->movement_threshold &&
-            abs(data->y_movement) <= config->movement_threshold) {
-            LOG_INF("SMALL TRACKPOINT MOVEMENT DETECTED: x=%d, y=%d",
-                   data->x_movement, data->y_movement);
-        }
-
-        // Reset state for next event
-        data->x_movement = 0;
-        data->y_movement = 0;
-        data->pending_sync = false;
-    }
-}
-
 // Initialize the device
 static int small_movement_detector_init(const struct device *dev) {
     const struct small_movement_detector_config *config = dev->config;
@@ -72,9 +37,6 @@ static int small_movement_detector_init(const struct device *dev) {
     data->x_movement = 0;
     data->y_movement = 0;
     data->pending_sync = false;
-
-    // Register for input events from the tracked device
-    input_register_callback(config->tracked_device, small_movement_handler, (void *)dev);
 
     LOG_INF("Small movement detector initialized with threshold %d", config->movement_threshold);
     return 0;
@@ -88,6 +50,44 @@ static int small_movement_detector_init(const struct device *dev) {
         .tracked_device = DEVICE_DT_GET(DT_INST_PHANDLE(n, device)), \
         .movement_threshold = DT_INST_PROP_OR(n, movement_threshold, 3), \
     }; \
+    \
+    /* Callback function to handle input events */ \
+    static void small_movement_handler_##n(struct input_event *evt) { \
+        const struct device *dev = DEVICE_DT_INST_GET(n); \
+        const struct small_movement_detector_config *config = dev->config; \
+        struct small_movement_detector_data *data = dev->data; \
+        \
+        /* Only process relative movement events */ \
+        if (evt->type == INPUT_EV_REL) { \
+            /* Track X/Y movement */ \
+            if (evt->code == INPUT_REL_X) { \
+                data->x_movement = evt->value; \
+                data->pending_sync = true; \
+            } else if (evt->code == INPUT_REL_Y) { \
+                data->y_movement = evt->value; \
+                data->pending_sync = true; \
+            } \
+        } \
+        \
+        /* Process movement data on sync events */ \
+        if (evt->sync && data->pending_sync) { \
+            /* Check if the movement is small (non-zero but below threshold) */ \
+            if ((abs(data->x_movement) > 0 || abs(data->y_movement) > 0) && \
+                abs(data->x_movement) <= config->movement_threshold && \
+                abs(data->y_movement) <= config->movement_threshold) { \
+                LOG_INF("SMALL TRACKPOINT MOVEMENT DETECTED: x=%d, y=%d", \
+                      data->x_movement, data->y_movement); \
+            } \
+            \
+            /* Reset state for next event */ \
+            data->x_movement = 0; \
+            data->y_movement = 0; \
+            data->pending_sync = false; \
+        } \
+    } \
+    \
+    /* Register callback for input events */ \
+    INPUT_CALLBACK_DEFINE(DEVICE_DT_GET(DT_INST_PHANDLE(n, device)), small_movement_handler_##n); \
     \
     DEVICE_DT_INST_DEFINE(n, \
                      small_movement_detector_init, \
