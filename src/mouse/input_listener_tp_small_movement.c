@@ -93,4 +93,4 @@ static int small_movement_listener_init(const struct device *dev) {
                      &sm_listener_data_##n, &sm_listener_config_##n,                           \
                      APPLICATION, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT, NULL);
 
-DT_INST_FOREACH_STATUS_OKAY(SMALL_MOVEMENT_LISTENER_INIT)s
+DT_INST_FOREACH_STATUS_OKAY(SMALL_MOVEMENT_LISTENER_INIT)
