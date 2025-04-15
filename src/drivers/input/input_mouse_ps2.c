@@ -737,6 +737,114 @@ static void zmk_mouse_ps2_init_tap_detection(struct zmk_mouse_ps2_data *data) {
     k_work_init_delayable(&data->initial_delay_timer, zmk_mouse_ps2_initial_delay_timer_callback);
 }
 
+
+/*
+ * PS/2 Command Sending Wrapper
+ */
+int zmk_mouse_ps2_activity_reporting_enable();
+int zmk_mouse_ps2_activity_reporting_disable();
+
+struct zmk_mouse_ps2_send_cmd_resp {
+    int err;
+    char err_msg[80];
+    uint8_t resp_buffer[8];
+    int resp_len;
+};
+
+struct zmk_mouse_ps2_send_cmd_resp zmk_mouse_ps2_send_cmd(char *cmd, int cmd_len, uint8_t *arg,
+                                                          int resp_len, bool pause_reporting) {
+    struct zmk_mouse_ps2_data *data = &zmk_mouse_ps2_data;
+    const struct zmk_mouse_ps2_config *config = &zmk_mouse_ps2_config;
+    const struct device *ps2_device = config->ps2_device;
+    int err = 0;
+    bool prev_activity_reporting_on = data->activity_reporting_on;
+
+    struct zmk_mouse_ps2_send_cmd_resp resp = {
+        .err = 0,
+        .err_msg = "",
+        .resp_len = 0,
+    };
+    memset(resp.resp_buffer, 0x0, sizeof(resp.resp_buffer));
+
+    // Don't send the string termination NULL byte
+    int cmd_bytes = cmd_len - 1;
+    if (cmd_bytes < 1) {
+        resp.err = -10;
+        snprintf(resp.err_msg, sizeof(resp.err_msg),
+                 "Cannot send cmd with less than 1 byte length");
+
+        return resp;
+    }
+
+    if (resp_len > sizeof(resp.resp_buffer)) {
+        resp.err = -11;
+        snprintf(resp.err_msg, sizeof(resp.err_msg),
+                 "Response can't be longer than the resp_buffer (%d)", sizeof(resp.err_msg));
+
+        return resp;
+    }
+
+    if (pause_reporting == true && data->activity_reporting_on == true) {
+        LOG_DBG("Disabling mouse activity reporting...");
+
+        resp.err = zmk_mouse_ps2_activity_reporting_disable();
+        if (resp.err) {
+            snprintf(resp.err_msg, sizeof(resp.err_msg), "Could not disable data reporting (%d)",
+                     err);
+        }
+    }
+
+    if (resp.err == 0) {
+        LOG_DBG("Sending cmd... %s", cmd);
+
+        for (int i = 0; i < cmd_bytes; i++) {
+            resp.err = ps2_write(ps2_device, cmd[i]);
+            if (resp.err) {
+                snprintf(resp.err_msg, sizeof(resp.err_msg), "Could not send cmd byte %d/%d (%d)",
+                         i + 1, cmd_bytes, err);
+                break;
+            }
+        }
+    }
+
+    if (resp.err == 0 && arg != NULL) {
+        LOG_DBG("Sending arg...");
+        resp.err = ps2_write(ps2_device, *arg);
+        if (resp.err) {
+            snprintf(resp.err_msg, sizeof(resp.err_msg), "Could not send arg (%d)", err);
+        }
+    }
+
+    if (resp.err == 0 && resp_len > 0) {
+        LOG_DBG("Reading response...");
+        for (int i = 0; i < resp_len; i++) {
+            resp.err = ps2_read(ps2_device, &resp.resp_buffer[i]);
+            if (resp.err) {
+                snprintf(resp.err_msg, sizeof(resp.err_msg),
+                         "Could not read response cmd byte %d/%d (%d)", i + 1, resp_len, err);
+                break;
+            }
+        }
+    }
+
+    if (pause_reporting == true && prev_activity_reporting_on == true) {
+        LOG_DBG("Enabling mouse activity reporting...");
+
+        err = zmk_mouse_ps2_activity_reporting_enable();
+        if (err) {
+            // Don' overwrite existing error
+            if (resp.err == 0) {
+                resp.err = err;
+                snprintf(resp.err_msg, sizeof(resp.err_msg),
+                         "Could not re-enable data reporting (%d)", err);
+            }
+        }
+    }
+
+    return resp;
+}
+
+
 // Modified mouse movement function to report movements but track for potential reversal
 void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
     struct zmk_mouse_ps2_data *data = &zmk_mouse_ps2_data;
@@ -925,112 +1033,6 @@ void zmk_mouse_ps2_activity_click_buttons(bool button_l, bool button_m, bool but
         input_report_key(data->dev, INPUT_BTN_RIGHT, button_r, true, K_FOREVER);
         data->button_r_is_held = button_r;
     }
-}
-
-/*
- * PS/2 Command Sending Wrapper
- */
-int zmk_mouse_ps2_activity_reporting_enable();
-int zmk_mouse_ps2_activity_reporting_disable();
-
-struct zmk_mouse_ps2_send_cmd_resp {
-    int err;
-    char err_msg[80];
-    uint8_t resp_buffer[8];
-    int resp_len;
-};
-
-struct zmk_mouse_ps2_send_cmd_resp zmk_mouse_ps2_send_cmd(char *cmd, int cmd_len, uint8_t *arg,
-                                                          int resp_len, bool pause_reporting) {
-    struct zmk_mouse_ps2_data *data = &zmk_mouse_ps2_data;
-    const struct zmk_mouse_ps2_config *config = &zmk_mouse_ps2_config;
-    const struct device *ps2_device = config->ps2_device;
-    int err = 0;
-    bool prev_activity_reporting_on = data->activity_reporting_on;
-
-    struct zmk_mouse_ps2_send_cmd_resp resp = {
-        .err = 0,
-        .err_msg = "",
-        .resp_len = 0,
-    };
-    memset(resp.resp_buffer, 0x0, sizeof(resp.resp_buffer));
-
-    // Don't send the string termination NULL byte
-    int cmd_bytes = cmd_len - 1;
-    if (cmd_bytes < 1) {
-        resp.err = -10;
-        snprintf(resp.err_msg, sizeof(resp.err_msg),
-                 "Cannot send cmd with less than 1 byte length");
-
-        return resp;
-    }
-
-    if (resp_len > sizeof(resp.resp_buffer)) {
-        resp.err = -11;
-        snprintf(resp.err_msg, sizeof(resp.err_msg),
-                 "Response can't be longer than the resp_buffer (%d)", sizeof(resp.err_msg));
-
-        return resp;
-    }
-
-    if (pause_reporting == true && data->activity_reporting_on == true) {
-        LOG_DBG("Disabling mouse activity reporting...");
-
-        resp.err = zmk_mouse_ps2_activity_reporting_disable();
-        if (resp.err) {
-            snprintf(resp.err_msg, sizeof(resp.err_msg), "Could not disable data reporting (%d)",
-                     err);
-        }
-    }
-
-    if (resp.err == 0) {
-        LOG_DBG("Sending cmd... %s", cmd);
-
-        for (int i = 0; i < cmd_bytes; i++) {
-            resp.err = ps2_write(ps2_device, cmd[i]);
-            if (resp.err) {
-                snprintf(resp.err_msg, sizeof(resp.err_msg), "Could not send cmd byte %d/%d (%d)",
-                         i + 1, cmd_bytes, err);
-                break;
-            }
-        }
-    }
-
-    if (resp.err == 0 && arg != NULL) {
-        LOG_DBG("Sending arg...");
-        resp.err = ps2_write(ps2_device, *arg);
-        if (resp.err) {
-            snprintf(resp.err_msg, sizeof(resp.err_msg), "Could not send arg (%d)", err);
-        }
-    }
-
-    if (resp.err == 0 && resp_len > 0) {
-        LOG_DBG("Reading response...");
-        for (int i = 0; i < resp_len; i++) {
-            resp.err = ps2_read(ps2_device, &resp.resp_buffer[i]);
-            if (resp.err) {
-                snprintf(resp.err_msg, sizeof(resp.err_msg),
-                         "Could not read response cmd byte %d/%d (%d)", i + 1, resp_len, err);
-                break;
-            }
-        }
-    }
-
-    if (pause_reporting == true && prev_activity_reporting_on == true) {
-        LOG_DBG("Enabling mouse activity reporting...");
-
-        err = zmk_mouse_ps2_activity_reporting_enable();
-        if (err) {
-            // Don' overwrite existing error
-            if (resp.err == 0) {
-                resp.err = err;
-                snprintf(resp.err_msg, sizeof(resp.err_msg),
-                         "Could not re-enable data reporting (%d)", err);
-            }
-        }
-    }
-
-    return resp;
 }
 
 
