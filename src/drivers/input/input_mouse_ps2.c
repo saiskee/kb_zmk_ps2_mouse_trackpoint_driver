@@ -147,6 +147,14 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define MOUSE_PS2_THREAD_STACK_SIZE 2048
 #define MOUSE_PS2_THREAD_PRIORITY 10
 
+
+// Configuration values for tap detection
+#define TAP_COOLDOWN_TIMEOUT_MS 80  // Time to wait for movement to end
+#define TAP_MAX_DURATION_MS 100     // Maximum duration for a tap
+#define TAP_DOUBLE_TAP_TIMEOUT_MS 300  // Maximum time between taps for double tap
+#define TAP_MAX_EVENTS 10           // Maximum number of events for a tap
+#define DEFAULT_INITIAL_MOVEMENT_DELAY_MS 50  // Default delay for initial mouse movement reporting
+
 /*
  * Global Variables
  */
@@ -528,13 +536,6 @@ zmk_mouse_ps2_activity_parse_packet_buffer(zmk_mouse_ps2_packet_mode packet_mode
  */
 
 static bool zmk_mouse_ps2_is_non_zero_1d_movement(int16_t speed) { return speed != 0; }
-
-// Configuration values for tap detection
-#define TAP_COOLDOWN_TIMEOUT_MS 80  // Time to wait for movement to end
-#define TAP_MAX_DURATION_MS 100     // Maximum duration for a tap
-#define TAP_DOUBLE_TAP_TIMEOUT_MS 300  // Maximum time between taps for double tap
-#define TAP_MAX_EVENTS 10           // Maximum number of events for a tap
-#define DEFAULT_INITIAL_MOVEMENT_DELAY_MS 50  // Default delay for initial mouse movement reporting
 
 // Function to perform a mouse click
 static void zmk_mouse_ps2_perform_click() {
