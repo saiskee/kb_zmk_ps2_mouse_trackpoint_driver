@@ -30,6 +30,10 @@ properties:
     type: boolean
     description: Enables scroll wheel on mouse devices supporting the Intellimouse extension.
 
+  single-tap-click:
+    type: boolean
+    description: Enables single tap click rather than double tap click.
+
   disable-clicking:
     type: boolean
     description: Disables clicking. Useful when using a PS2 driver that is prone to erros in transmissions to reduce accidental clicks.
