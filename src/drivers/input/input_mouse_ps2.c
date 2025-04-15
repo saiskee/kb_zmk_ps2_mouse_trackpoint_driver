@@ -1601,7 +1601,7 @@ int zmk_mouse_ps2_tp_value6_upper_plateau_speed_change(int amount) {
 int zmk_mouse_ps2_tp_z_force_get(uint8_t *z_force) {
 
     struct zmk_mouse_ps2_send_cmd_resp resp = zmk_mouse_ps2_send_cmd(
-        MOUSE_PS2_CMD_TP_GET_Z_FORCE, sizeof(MOUSE_PS2_CMD_TP_GET_Z_FORCE), "\x3e", MOUSE_PS2_CMD_TP_GET_Z_FORCE_RESP_LEN, false);
+        MOUSE_PS2_CMD_TP_GET_Z_FORCE, sizeof(MOUSE_PS2_CMD_TP_GET_Z_FORCE), "\x3e", MOUSE_PS2_CMD_TP_GET_Z_FORCE_RESP_LEN, true);
     if (resp.err) {
         LOG_ERR("Could not get Z-axis force: %s (err: %d)", resp.err_msg, resp.err);
         return resp.err;
