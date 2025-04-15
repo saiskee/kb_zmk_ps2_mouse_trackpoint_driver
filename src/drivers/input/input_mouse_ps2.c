@@ -715,7 +715,7 @@ void zmk_mouse_ps2_activity_click_buttons(bool button_l, bool button_m, bool but
         button_m != data->button_m_is_held ||
         button_r != data->button_r_is_held) {
         // Send a sync event by using input_report with sync=true
-        input_report(data->dev, INPUT_EV_SYN, 0, 0, true, K_FOREVER);
+        input_report(data->dev, INPUT_EV_KEY, 0, 0, true, K_FOREVER);
     }
 }
 
