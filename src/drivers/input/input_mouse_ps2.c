@@ -710,11 +710,12 @@ void zmk_mouse_ps2_activity_click_buttons(bool button_l, bool button_m, bool but
         data->button_r_is_held = button_r;
     }
 
-    // Check if any button state has changed, if so then sync the report
+    // If any button state has changed, send a sync report
     if (button_l != data->button_l_is_held ||
         button_m != data->button_m_is_held ||
         button_r != data->button_r_is_held) {
-        input_sync(data->dev, K_FOREVER);
+        // Send a sync event by using input_report with sync=true
+        input_report(data->dev, INPUT_EV_SYN, 0, 0, true, K_FOREVER);
     }
 }
 
