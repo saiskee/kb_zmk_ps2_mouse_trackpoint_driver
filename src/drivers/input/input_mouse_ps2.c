@@ -330,23 +330,6 @@ int zmk_mouse_ps2_tp_z_force_get(uint8_t *z_force);
 #define MOUSE_PS2_GET_BIT(data, bit_pos) ((data >> bit_pos) & 0x1)
 #define MOUSE_PS2_SET_BIT(data, bit_val, bit_pos) (data |= (bit_val) << bit_pos)
 
-/*
- * Z-Force API
- */
-
-int zmk_mouse_ps2_tp_z_force_get(uint8_t *z_force) {
-    char cmd[] = {0xE2, 0x80, 0x20};
-    struct zmk_mouse_ps2_send_cmd_resp resp = zmk_mouse_ps2_send_cmd(
-        cmd, sizeof(cmd), NULL, 1, true);
-    if (resp.err) {
-        LOG_ERR("Could not get Z-axis force");
-        return resp.err;
-    }
-
-    *z_force = resp.resp_buffer[0];
-    LOG_DBG("Trackpoint Z-force is %d", *z_force);
-    return 0;
-}
 
 /*
  * Mouse Activity Packet Reading
@@ -1013,6 +996,25 @@ struct zmk_mouse_ps2_send_cmd_resp zmk_mouse_ps2_send_cmd(char *cmd, int cmd_len
     }
 
     return resp;
+}
+
+
+/*
+ * Z-Force API
+ */
+
+int zmk_mouse_ps2_tp_z_force_get(uint8_t *z_force) {
+    char cmd[] = {0xE2, 0x80, 0x20};
+    struct zmk_mouse_ps2_send_cmd_resp resp = zmk_mouse_ps2_send_cmd(
+        cmd, sizeof(cmd), NULL, 1, true);
+    if (resp.err) {
+        LOG_ERR("Could not get Z-axis force");
+        return resp.err;
+    }
+
+    *z_force = resp.resp_buffer[0];
+    LOG_DBG("Trackpoint Z-force is %d", *z_force);
+    return 0;
 }
 
 int zmk_mouse_ps2_activity_reporting_enable() {
