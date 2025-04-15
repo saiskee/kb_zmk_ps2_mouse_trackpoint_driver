@@ -566,9 +566,11 @@ static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
                            time_between_taps);
 
                     // Trigger a left mouse button click
-                    input_report_key(data->dev, INPUT_BTN_0, 1, false, K_FOREVER);
-                    k_sleep(K_MSEC(30)); // Small delay between press and release
-                    input_report_key(data->dev, INPUT_BTN_0, 0, true, K_FOREVER);
+                    zmk_hid_mouse_button_press(0); // Press left mouse button
+                    zmk_endpoints_send_mouse_report(); // Send the mouse report
+                    k_sleep(K_MSEC(30)); // Delay between press and release
+                    zmk_hid_mouse_button_release(0); // Release left mouse button
+                    zmk_endpoints_send_mouse_report(); // Send the mouse report
 
                     // Reset double tap tracking after handling
                     data->last_was_tap = false;
