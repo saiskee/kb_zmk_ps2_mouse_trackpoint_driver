@@ -150,9 +150,12 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 // Configuration values for tap detection
 #define TAP_COOLDOWN_TIMEOUT_MS 80  // Time to wait for movement to end
-#define TAP_MAX_DURATION_MS 100     // Maximum duration for a tap
+#define TAP_MAX_DURATION_MS 50      // Maximum duration for a tap (reduced from 100ms)
+#define TAP_MIN_DURATION_MS 5       // Minimum duration for a tap to be considered valid
 #define TAP_DOUBLE_TAP_TIMEOUT_MS 300  // Maximum time between taps for double tap
-#define TAP_MAX_EVENTS 10           // Maximum number of events for a tap
+#define TAP_MAX_EVENTS 6            // Maximum number of events for a tap (reduced from 10)
+#define TAP_MIN_EVENTS 2            // Minimum number of events for a tap to be considered valid
+#define TAP_MAX_DISTANCE 8          // Maximum total distance for a tap (sum of absolute X and Y movement)
 #define DEFAULT_INITIAL_MOVEMENT_DELAY_MS 50  // Default delay for initial mouse movement reporting
 
 /*
@@ -227,6 +230,7 @@ struct zmk_mouse_ps2_data {
     struct k_work_delayable tap_timer; // Timer for detecting end of movement
     int16_t accumulated_x;           // Accumulated X movement during potential tap
     int16_t accumulated_y;           // Accumulated Y movement during potential tap
+    int16_t total_movement_distance; // Total movement distance during sequence
     bool initial_delay_active;       // Whether we're in the initial movement delay period
     struct k_work_delayable initial_delay_timer; // Timer for initial movement delay
 
@@ -574,17 +578,25 @@ static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
         // Calculate total movement duration
         int64_t total_duration = data->last_movement_time_ms - data->first_movement_time_ms;
 
-        LOG_INF("Movement ended. Duration: %lld ms, Events: %d",
-                total_duration, data->movement_count);
+        LOG_INF("Movement ended. Duration: %lld ms, Events: %d, Distance: %d",
+                total_duration, data->movement_count, data->total_movement_distance);
 
-        // Check if this was a tap (short duration movement)
-        // A tap should be a very short duration movement (≤100ms) with few events
-        if (total_duration <= TAP_MAX_DURATION_MS &&
-            !data->is_dragging &&
-            data->movement_count <= TAP_MAX_EVENTS) {
+        // Ignore very short taps with only one event (likely noise or spurious inputs)
+        if (total_duration < TAP_MIN_DURATION_MS && data->movement_count < TAP_MIN_EVENTS) {
+            LOG_WRN("IGNORING SPURIOUS TAP - too short (%lld ms) with too few events (%d)",
+                   total_duration, data->movement_count);
+        }
+        // Check if this was a tap (short duration movement with minimal distance)
+        // A tap should be a very short duration movement with few events and little distance traveled
+        else if (total_duration <= TAP_MAX_DURATION_MS &&
+                total_duration >= TAP_MIN_DURATION_MS &&
+                !data->is_dragging &&
+                data->movement_count <= TAP_MAX_EVENTS &&
+                data->movement_count >= TAP_MIN_EVENTS &&
+                data->total_movement_distance <= TAP_MAX_DISTANCE) {
 
-            LOG_WRN("TAP DETECTED with duration %lld ms, %d events",
-                    total_duration, data->movement_count);
+            LOG_WRN("TAP DETECTED with duration %lld ms, %d events, distance %d",
+                    total_duration, data->movement_count, data->total_movement_distance);
 
             /* Commenting out movement reversal code as it's overshooting
             // Undo the accumulated movement
@@ -630,11 +642,15 @@ static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
                 }
             }
         } else if (data->is_dragging) {
-            LOG_WRN("DRAG ENDED after %lld ms, %d events",
-                    total_duration, data->movement_count);
+            LOG_WRN("DRAG ENDED after %lld ms, %d events, distance %d",
+                    total_duration, data->movement_count, data->total_movement_distance);
             // Reset double tap tracking since a drag occurred
             data->last_was_tap = false;
         } else {
+            LOG_WRN("NOT A TAP - duration: %lld ms (min %d, max %d), events: %d (min %d, max %d), distance: %d (max %d)",
+                    total_duration, TAP_MIN_DURATION_MS, TAP_MAX_DURATION_MS,
+                    data->movement_count, TAP_MIN_EVENTS, TAP_MAX_EVENTS,
+                    data->total_movement_distance, TAP_MAX_DISTANCE);
             // Not a tap or drag, reset double tap tracking
             data->last_was_tap = false;
         }
@@ -646,6 +662,7 @@ static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
         data->tap_in_progress = false;
         data->accumulated_x = 0;
         data->accumulated_y = 0;
+        data->total_movement_distance = 0;
         data->initial_delay_active = false;
     }
 }
@@ -693,6 +710,7 @@ static void zmk_mouse_ps2_init_tap_detection(struct zmk_mouse_ps2_data *data) {
     data->tap_in_progress = false;
     data->accumulated_x = 0;
     data->accumulated_y = 0;
+    data->total_movement_distance = 0;
     data->initial_delay_active = false;
 
     // Initialize the tap timer
@@ -716,6 +734,9 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
         // Cancel any pending tap timer
         k_work_cancel_delayable(&data->tap_timer);
 
+        // Track total movement distance
+        data->total_movement_distance += (abs(mov_x) + abs(mov_y));
+
         // If this is the start of a new movement sequence
         if (!data->is_moving) {
             data->is_moving = true;
@@ -724,6 +745,7 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
             data->tap_in_progress = true;
             data->accumulated_x = 0;
             data->accumulated_y = 0;
+            data->total_movement_distance = 0;
 
             // Only enable initial delay if configured value is greater than 0
             if (config->initial_movement_delay_ms > 0) {
@@ -744,8 +766,11 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
             // Check if we've been moving long enough to be considered dragging
             int64_t movement_duration = current_time_ms - data->first_movement_time_ms;
 
-            // If we're getting rapid movement events or moving for a long time, it's a drag
-            if (!data->is_dragging && (movement_duration > 300 || data->movement_count > 20)) {
+            // If we've exceeded any tap threshold, it's definitely a drag
+            if (!data->is_dragging &&
+                (movement_duration > TAP_MAX_DURATION_MS ||
+                 data->movement_count > TAP_MAX_EVENTS ||
+                 data->total_movement_distance > TAP_MAX_DISTANCE)) {
                 data->is_dragging = true;
                 data->tap_in_progress = false; // No longer a potential tap
 
@@ -753,20 +778,10 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
                 if (data->initial_delay_active) {
                     k_work_cancel_delayable(&data->initial_delay_timer);
                     data->initial_delay_active = false;
-
-                    /* Commenting out accumulated movement reporting
-                    if (data->accumulated_x != 0) {
-                        input_report_rel(data->dev, INPUT_REL_X, data->accumulated_x,
-                                        data->accumulated_y == 0, K_NO_WAIT);
-                    }
-                    if (data->accumulated_y != 0) {
-                        input_report_rel(data->dev, INPUT_REL_Y, data->accumulated_y, true, K_NO_WAIT);
-                    }
-                    */
                 }
 
-                LOG_WRN("DRAG DETECTED after %lld ms with %d movements",
-                       movement_duration, data->movement_count);
+                LOG_WRN("DRAG DETECTED after %lld ms with %d movements, distance %d",
+                       movement_duration, data->movement_count, data->total_movement_distance);
             }
         }
 
