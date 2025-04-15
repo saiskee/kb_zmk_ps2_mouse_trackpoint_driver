@@ -217,6 +217,8 @@ struct zmk_mouse_ps2_data {
     struct k_work_delayable tap_timer; // Timer for detecting end of movement
     int16_t accumulated_x;           // Accumulated X movement during potential tap
     int16_t accumulated_y;           // Accumulated Y movement during potential tap
+    bool initial_delay_active;       // Whether we're in the initial movement delay period
+    struct k_work_delayable initial_delay_timer; // Timer for initial movement delay
 
     bool activity_reporting_on;
     bool is_trackpoint;
@@ -528,6 +530,7 @@ static bool zmk_mouse_ps2_is_non_zero_1d_movement(int16_t speed) { return speed 
 #define TAP_MAX_DURATION_MS 100     // Maximum duration for a tap
 #define TAP_DOUBLE_TAP_TIMEOUT_MS 300  // Maximum time between taps for double tap
 #define TAP_MAX_EVENTS 10           // Maximum number of events for a tap
+#define INITIAL_MOVEMENT_DELAY_MS 50  // Delay for initial mouse movement reporting
 
 // Tap detection timer callback
 static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
@@ -543,6 +546,12 @@ static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
 
     // If we're still in moving state
     if (data->is_moving) {
+        // Cancel any pending initial delay timer
+        if (data->initial_delay_active) {
+            k_work_cancel_delayable(&data->initial_delay_timer);
+            data->initial_delay_active = false;
+        }
+
         // Calculate total movement duration
         int64_t total_duration = data->last_movement_time_ms - data->first_movement_time_ms;
 
@@ -616,7 +625,33 @@ static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
         data->tap_in_progress = false;
         data->accumulated_x = 0;
         data->accumulated_y = 0;
+        data->initial_delay_active = false;
     }
+}
+
+// Initial movement delay timer callback
+static void zmk_mouse_ps2_initial_delay_timer_callback(struct k_work *work) {
+    // Get the work_delayable structure
+    struct k_work_delayable *dwork = k_work_delayable_from_work(work);
+
+    // Get the data structure that contains the timer
+    struct zmk_mouse_ps2_data *data =
+        CONTAINER_OF(dwork, struct zmk_mouse_ps2_data, initial_delay_timer);
+
+    // Initial delay is over, now we can report the accumulated movement
+    data->initial_delay_active = false;
+
+    // Report the accumulated movement if any
+    if (data->accumulated_x != 0) {
+        input_report_rel(data->dev, INPUT_REL_X, data->accumulated_x,
+                         data->accumulated_y == 0, K_NO_WAIT);
+    }
+    if (data->accumulated_y != 0) {
+        input_report_rel(data->dev, INPUT_REL_Y, data->accumulated_y, true, K_NO_WAIT);
+    }
+
+    LOG_DBG("Initial delay ended, reported accumulated movement (x=%d, y=%d)",
+            data->accumulated_x, data->accumulated_y);
 }
 
 // Function to initialize the tap detection data
@@ -632,9 +667,13 @@ static void zmk_mouse_ps2_init_tap_detection(struct zmk_mouse_ps2_data *data) {
     data->tap_in_progress = false;
     data->accumulated_x = 0;
     data->accumulated_y = 0;
+    data->initial_delay_active = false;
 
     // Initialize the tap timer
     k_work_init_delayable(&data->tap_timer, zmk_mouse_ps2_tap_timer_callback);
+
+    // Initialize the initial delay timer
+    k_work_init_delayable(&data->initial_delay_timer, zmk_mouse_ps2_initial_delay_timer_callback);
 }
 
 // Modified mouse movement function to report movements but track for potential reversal
@@ -658,7 +697,12 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
             data->tap_in_progress = true;
             data->accumulated_x = 0;
             data->accumulated_y = 0;
-            LOG_DBG("Movement started at %lld ms", current_time_ms);
+            data->initial_delay_active = true;
+
+            // Start the initial delay timer
+            k_work_schedule(&data->initial_delay_timer, K_MSEC(INITIAL_MOVEMENT_DELAY_MS));
+
+            LOG_DBG("Movement started at %lld ms, initial delay active", current_time_ms);
         } else {
             data->movement_count++;
 
@@ -669,6 +713,22 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
             if (!data->is_dragging && (movement_duration > 300 || data->movement_count > 20)) {
                 data->is_dragging = true;
                 data->tap_in_progress = false; // No longer a potential tap
+
+                // If we're still in the initial delay period but determine it's a drag,
+                // cancel the delay and report accumulated movement
+                if (data->initial_delay_active) {
+                    k_work_cancel_delayable(&data->initial_delay_timer);
+                    data->initial_delay_active = false;
+
+                    if (data->accumulated_x != 0) {
+                        input_report_rel(data->dev, INPUT_REL_X, data->accumulated_x,
+                                        data->accumulated_y == 0, K_NO_WAIT);
+                    }
+                    if (data->accumulated_y != 0) {
+                        input_report_rel(data->dev, INPUT_REL_Y, data->accumulated_y, true, K_NO_WAIT);
+                    }
+                }
+
                 LOG_WRN("DRAG DETECTED after %lld ms with %d movements",
                        movement_duration, data->movement_count);
             }
@@ -684,25 +744,26 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
                           (TAP_COOLDOWN_TIMEOUT_MS / 2) : TAP_COOLDOWN_TIMEOUT_MS;
         k_work_schedule(&data->tap_timer, K_MSEC(timeout));
 
-        // Always report movement, but track it for potential reversal
-        if (data->tap_in_progress && !data->is_dragging) {
-            // Track accumulated movement for potential undo
-            if (have_x) {
-                data->accumulated_x += mov_x;
-            }
-            if (have_y) {
-                data->accumulated_y += mov_y;
-            }
-            LOG_DBG("Tracking movement during potential tap (x=%d, y=%d), accumulated (x=%d, y=%d)",
-                   mov_x, mov_y, data->accumulated_x, data->accumulated_y);
-        }
-
-        // Always report the movement
+        // Always track movement for potential reversal or delayed reporting
         if (have_x) {
-            ret = input_report_rel(data->dev, INPUT_REL_X, mov_x, !have_y, K_NO_WAIT);
+            data->accumulated_x += mov_x;
         }
         if (have_y) {
-            ret = input_report_rel(data->dev, INPUT_REL_Y, mov_y, true, K_NO_WAIT);
+            data->accumulated_y += mov_y;
+        }
+
+        // Only report movement immediately if not in initial delay period
+        if (!data->initial_delay_active) {
+            if (have_x) {
+                ret = input_report_rel(data->dev, INPUT_REL_X, mov_x, !have_y, K_NO_WAIT);
+            }
+            if (have_y) {
+                ret = input_report_rel(data->dev, INPUT_REL_Y, mov_y, true, K_NO_WAIT);
+            }
+            LOG_DBG("Reporting movement (x=%d, y=%d)", mov_x, mov_y);
+        } else {
+            LOG_DBG("Delaying movement (x=%d, y=%d), accumulated (x=%d, y=%d)",
+                   mov_x, mov_y, data->accumulated_x, data->accumulated_y);
         }
     }
 }
