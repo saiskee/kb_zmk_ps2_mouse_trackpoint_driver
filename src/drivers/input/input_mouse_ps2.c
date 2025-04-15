@@ -150,13 +150,13 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 // Configuration values for tap detection
 #define TAP_COOLDOWN_TIMEOUT_MS 80  // Time to wait for movement to end
-#define TAP_MAX_DURATION_MS 50      // Maximum duration for a tap (reduced from 100ms)
+#define TAP_MAX_DURATION_MS 80      // Maximum duration for a tap (reduced from 100ms)
 #define TAP_MIN_DURATION_MS 5       // Minimum duration for a tap to be considered valid
 #define TAP_DOUBLE_TAP_TIMEOUT_MS 300  // Maximum time between taps for double tap
 #define TAP_MAX_EVENTS 6            // Maximum number of events for a tap (reduced from 10)
 #define TAP_MIN_EVENTS 2            // Minimum number of events for a tap to be considered valid
 #define TAP_MAX_DISTANCE 100          // Maximum total distance for a tap (sum of absolute X and Y movement)
-#define DEFAULT_INITIAL_MOVEMENT_DELAY_MS 50  // Default delay for initial mouse movement reporting
+#define DEFAULT_INITIAL_MOVEMENT_DELAY_MS TAP_MAX_DURATION_MS  // Default delay for initial mouse movement reporting
 
 /*
  * Global Variables
