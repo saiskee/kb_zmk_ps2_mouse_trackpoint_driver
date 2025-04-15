@@ -167,6 +167,7 @@ struct zmk_mouse_ps2_config {
     bool disable_clicking;
     int sampling_rate;
     int initial_movement_delay_ms;  // Added configurable initial movement delay
+    bool single_tap_click;         // Whether to use single tap (true) or double tap (false) for clicking
 
     bool tp_press_to_select;
     int tp_press_to_select_threshold;
@@ -254,6 +255,7 @@ static const struct zmk_mouse_ps2_config zmk_mouse_ps2_config = {
     .disable_clicking = DT_INST_PROP_OR(0, disable_clicking, false),
     .sampling_rate = DT_INST_PROP_OR(0, sampling_rate, MOUSE_PS2_CMD_SET_SAMPLING_RATE_DEFAULT),
     .initial_movement_delay_ms = DT_INST_PROP_OR(0, initial_movement_delay_ms, DEFAULT_INITIAL_MOVEMENT_DELAY_MS),
+    .single_tap_click = DT_INST_PROP_OR(0, single_tap_click, false),  // Default to double tap clicking
     .tp_press_to_select = DT_INST_PROP_OR(0, tp_press_to_select, false),
     .tp_press_to_select_threshold = DT_INST_PROP_OR(0, tp_press_to_select_threshold, -1),
     .tp_sensitivity = DT_INST_PROP_OR(0, tp_sensitivity, -1),
@@ -534,6 +536,18 @@ static bool zmk_mouse_ps2_is_non_zero_1d_movement(int16_t speed) { return speed 
 #define TAP_MAX_EVENTS 10           // Maximum number of events for a tap
 #define DEFAULT_INITIAL_MOVEMENT_DELAY_MS 50  // Default delay for initial mouse movement reporting
 
+// Function to perform a mouse click
+static void zmk_mouse_ps2_perform_click() {
+    LOG_WRN("PERFORMING MOUSE CLICK");
+
+    // Trigger a left mouse button click
+    zmk_hid_mouse_button_press(0); // Press left mouse button
+    zmk_endpoints_send_mouse_report(); // Send the mouse report
+    k_sleep(K_MSEC(30)); // Delay between press and release
+    zmk_hid_mouse_button_release(0); // Release left mouse button
+    zmk_endpoints_send_mouse_report(); // Send the mouse report
+}
+
 // Tap detection timer callback
 static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
     // Get the work_delayable structure
@@ -542,6 +556,8 @@ static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
     // Get the data structure that contains the timer
     struct zmk_mouse_ps2_data *data =
         CONTAINER_OF(dwork, struct zmk_mouse_ps2_data, tap_timer);
+
+    const struct zmk_mouse_ps2_config *config = &zmk_mouse_ps2_config;
 
     // Current time
     int64_t current_time_ms = k_uptime_get();
@@ -581,36 +597,36 @@ static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
             LOG_DBG("Reversed movement (x=%d, y=%d)", data->accumulated_x, data->accumulated_y);
             */
 
-            // Check for double tap
-            if (data->last_was_tap) {
-                int64_t time_between_taps = current_time_ms - data->last_tap_time_ms;
+            // Handle tap click based on configuration
+            if (config->single_tap_click) {
+                // In single tap mode, every tap generates a click
+                zmk_mouse_ps2_perform_click();
+                // Reset tap tracking
+                data->last_was_tap = false;
+            } else {
+                // In double tap mode, check for double tap
+                if (data->last_was_tap) {
+                    int64_t time_between_taps = current_time_ms - data->last_tap_time_ms;
 
-                if (time_between_taps <= TAP_DOUBLE_TAP_TIMEOUT_MS) {
-                    // This is a double tap! Trigger mouse click
-                    LOG_WRN("DOUBLE TAP DETECTED - Time between taps: %lld ms - TRIGGERING MOUSE CLICK",
-                           time_between_taps);
-
-                    // Trigger a left mouse button click
-                    zmk_hid_mouse_button_press(0); // Press left mouse button
-                    zmk_endpoints_send_mouse_report(); // Send the mouse report
-                    k_sleep(K_MSEC(30)); // Delay between press and release
-                    zmk_hid_mouse_button_release(0); // Release left mouse button
-                    zmk_endpoints_send_mouse_report(); // Send the mouse report
-
-                    // Reset double tap tracking after handling
-                    data->last_was_tap = false;
+                    if (time_between_taps <= TAP_DOUBLE_TAP_TIMEOUT_MS) {
+                        // This is a double tap! Trigger mouse click
+                        LOG_WRN("DOUBLE TAP DETECTED - Time between taps: %lld ms", time_between_taps);
+                        zmk_mouse_ps2_perform_click();
+                        // Reset double tap tracking after handling
+                        data->last_was_tap = false;
+                    } else {
+                        // Too much time between taps, this starts a new sequence
+                        LOG_DBG("Time between taps too long: %lld ms > %d ms",
+                            time_between_taps, TAP_DOUBLE_TAP_TIMEOUT_MS);
+                        data->last_was_tap = true;
+                        data->last_tap_time_ms = current_time_ms;
+                    }
                 } else {
-                    // Too much time between taps, this starts a new sequence
-                    LOG_DBG("Time between taps too long: %lld ms > %d ms",
-                           time_between_taps, TAP_DOUBLE_TAP_TIMEOUT_MS);
+                    // First tap, record it for potential double tap
                     data->last_was_tap = true;
                     data->last_tap_time_ms = current_time_ms;
+                    LOG_DBG("First tap detected - waiting for potential double tap");
                 }
-            } else {
-                // First tap, record it for potential double tap
-                data->last_was_tap = true;
-                data->last_tap_time_ms = current_time_ms;
-                LOG_DBG("First tap detected - waiting for potential double tap");
             }
         } else if (data->is_dragging) {
             LOG_WRN("DRAG ENDED after %lld ms, %d events",
