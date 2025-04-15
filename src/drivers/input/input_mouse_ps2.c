@@ -447,12 +447,13 @@ void zmk_mouse_ps2_activity_process_cmd(zmk_mouse_ps2_packet_mode packet_mode, u
     int x_delta = abs(data->prev_packet.mov_x - packet.mov_x);
     int y_delta = abs(data->prev_packet.mov_y - packet.mov_y);
 
-    LOG_DBG("Got mouse activity cmd "
+    /*LOG_DBG("Got mouse activity cmd "
             "(mov_x=%d, mov_y=%d, o_x=%d, o_y=%d, scroll=%d, "
             "b_l=%d, b_m=%d, b_r=%d) and ("
             "x_delta=%d, y_delta=%d)",
             packet.mov_x, packet.mov_y, packet.overflow_x, packet.overflow_y, packet.scroll,
             packet.button_l, packet.button_m, packet.button_r, x_delta, y_delta);
+            */
 
 #if IS_ENABLED(CONFIG_ZMK_INPUT_MOUSE_PS2_ENABLE_ERROR_MITIGATION)
     if (packet.overflow_x == 1 && packet.overflow_y == 1) {
@@ -715,7 +716,8 @@ static void zmk_mouse_ps2_initial_delay_timer_callback(struct k_work *work) {
     */
 
     // Just log that delay ended
-    LOG_DBG("Initial delay ended, movement tracking resumed");
+    LOG_WRN("INITIAL DELAY ENDED after %d ms, movement count: %d, distance: %d",
+           DEFAULT_INITIAL_MOVEMENT_DELAY_MS, data->movement_count, data->total_movement_distance);
 }
 
 // Function to initialize the tap detection data
@@ -756,7 +758,8 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
         k_work_cancel_delayable(&data->tap_timer);
 
         // Track total movement distance
-        data->total_movement_distance += (abs(mov_x) + abs(mov_y));
+        int16_t this_movement = abs(mov_x) + abs(mov_y);
+        data->total_movement_distance += this_movement;
 
         // If this is the start of a new movement sequence
         if (!data->is_moving) {
@@ -766,7 +769,9 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
             data->tap_in_progress = true;
             data->accumulated_x = 0;
             data->accumulated_y = 0;
-            data->total_movement_distance = 0;
+            data->total_movement_distance = this_movement;
+
+            LOG_WRN("MOVEMENT START with initial distance %d", this_movement);
 
             // Only enable initial delay if configured value is greater than 0
             if (config->initial_movement_delay_ms > 0) {
@@ -788,18 +793,40 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
             int64_t movement_duration = current_time_ms - data->first_movement_time_ms;
 
             // If we've exceeded any tap threshold, it's definitely a drag
-            if (!data->is_dragging &&
-                (movement_duration > TAP_MAX_DURATION_MS ||
-                 data->movement_count > TAP_MAX_EVENTS ||
-                 data->total_movement_distance > TAP_MAX_DISTANCE)) {
-                data->is_dragging = true;
-                data->tap_in_progress = false; // No longer a potential tap
+            if (!data->is_dragging) {
+                // Log detailed reason when tap gets canceled during movement
+                if (movement_duration > TAP_MAX_DURATION_MS) {
+                    LOG_WRN("DRAG DETECTED - duration exceeded: %lld ms > %d ms",
+                           movement_duration, TAP_MAX_DURATION_MS);
+                    data->is_dragging = true;
+                    data->tap_in_progress = false;
+                }
+                else if (data->movement_count > TAP_MAX_EVENTS) {
+                    LOG_WRN("DRAG DETECTED - too many events: %d > %d",
+                           data->movement_count, TAP_MAX_EVENTS);
+                    data->is_dragging = true;
+                    data->tap_in_progress = false;
+                }
+                else if (data->total_movement_distance > TAP_MAX_DISTANCE) {
+                    LOG_WRN("DRAG DETECTED - distance too large: %d > %d (this movement: %d)",
+                           data->total_movement_distance, TAP_MAX_DISTANCE, this_movement);
+                    data->is_dragging = true;
+                    data->tap_in_progress = false;
+                }
 
                 // Cancel initial delay if we determine it's a drag
-                if (data->initial_delay_active) {
+                if (data->is_dragging && data->initial_delay_active) {
+                    LOG_WRN("CANCELING initial delay due to drag detection");
                     k_work_cancel_delayable(&data->initial_delay_timer);
                     data->initial_delay_active = false;
                 }
+            }
+
+            // Log large movements that might affect tap detection
+            if (this_movement > TAP_MAX_DISTANCE / 2) {
+                LOG_WRN("LARGE MOVEMENT: %d units (accumulated: %d, max: %d), event #%d at %lld ms",
+                       this_movement, data->total_movement_distance, TAP_MAX_DISTANCE,
+                       data->movement_count, movement_duration);
             }
         }
 
