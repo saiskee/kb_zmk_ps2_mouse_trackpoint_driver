@@ -567,6 +567,7 @@ static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
             LOG_WRN("TAP DETECTED with duration %lld ms, %d events",
                     total_duration, data->movement_count);
 
+            /* Commenting out movement reversal code as it's overshooting
             // Undo the accumulated movement
             if (data->accumulated_x != 0) {
                 input_report_rel(data->dev, INPUT_REL_X, -data->accumulated_x, data->accumulated_y == 0, K_NO_WAIT);
@@ -576,6 +577,7 @@ static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
             }
 
             LOG_DBG("Reversed movement (x=%d, y=%d)", data->accumulated_x, data->accumulated_y);
+            */
 
             // Check for double tap
             if (data->last_was_tap) {
@@ -641,6 +643,7 @@ static void zmk_mouse_ps2_initial_delay_timer_callback(struct k_work *work) {
     // Initial delay is over, now we can report the accumulated movement
     data->initial_delay_active = false;
 
+    /* Commenting out accumulated movement reporting as it's causing issues
     // Report the accumulated movement if any
     if (data->accumulated_x != 0) {
         input_report_rel(data->dev, INPUT_REL_X, data->accumulated_x,
@@ -652,6 +655,10 @@ static void zmk_mouse_ps2_initial_delay_timer_callback(struct k_work *work) {
 
     LOG_DBG("Initial delay ended, reported accumulated movement (x=%d, y=%d)",
             data->accumulated_x, data->accumulated_y);
+    */
+
+    // Just log that delay ended
+    LOG_DBG("Initial delay ended, movement tracking resumed");
 }
 
 // Function to initialize the tap detection data
@@ -714,12 +721,12 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
                 data->is_dragging = true;
                 data->tap_in_progress = false; // No longer a potential tap
 
-                // If we're still in the initial delay period but determine it's a drag,
-                // cancel the delay and report accumulated movement
+                // Cancel initial delay if we determine it's a drag
                 if (data->initial_delay_active) {
                     k_work_cancel_delayable(&data->initial_delay_timer);
                     data->initial_delay_active = false;
 
+                    /* Commenting out accumulated movement reporting
                     if (data->accumulated_x != 0) {
                         input_report_rel(data->dev, INPUT_REL_X, data->accumulated_x,
                                         data->accumulated_y == 0, K_NO_WAIT);
@@ -727,6 +734,7 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
                     if (data->accumulated_y != 0) {
                         input_report_rel(data->dev, INPUT_REL_Y, data->accumulated_y, true, K_NO_WAIT);
                     }
+                    */
                 }
 
                 LOG_WRN("DRAG DETECTED after %lld ms with %d movements",
@@ -744,6 +752,7 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
                           (TAP_COOLDOWN_TIMEOUT_MS / 2) : TAP_COOLDOWN_TIMEOUT_MS;
         k_work_schedule(&data->tap_timer, K_MSEC(timeout));
 
+        /* Commenting out movement accumulation as it's causing issues with overshooting
         // Always track movement for potential reversal or delayed reporting
         if (have_x) {
             data->accumulated_x += mov_x;
@@ -751,6 +760,7 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
         if (have_y) {
             data->accumulated_y += mov_y;
         }
+        */
 
         // Only report movement immediately if not in initial delay period
         if (!data->initial_delay_active) {
@@ -762,8 +772,7 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
             }
             LOG_DBG("Reporting movement (x=%d, y=%d)", mov_x, mov_y);
         } else {
-            LOG_DBG("Delaying movement (x=%d, y=%d), accumulated (x=%d, y=%d)",
-                   mov_x, mov_y, data->accumulated_x, data->accumulated_y);
+            LOG_DBG("Delaying movement (x=%d, y=%d) during initial delay", mov_x, mov_y);
         }
     }
 }
