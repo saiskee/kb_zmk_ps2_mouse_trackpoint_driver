@@ -1004,23 +1004,7 @@ struct zmk_mouse_ps2_send_cmd_resp zmk_mouse_ps2_send_cmd(char *cmd, int cmd_len
 }
 
 
-/*
- * Z-Force API
- */
 
-int zmk_mouse_ps2_tp_z_force_get(uint8_t *z_force) {
-
-    struct zmk_mouse_ps2_send_cmd_resp resp = zmk_mouse_ps2_send_cmd(
-        MOUSE_PS2_CMD_TP_GET_Z_FORCE, sizeof(MOUSE_PS2_CMD_TP_GET_Z_FORCE), NULL, MOUSE_PS2_CMD_TP_GET_Z_FORCE_RESP_LEN, true);
-    if (resp.err) {
-        LOG_ERR("Could not get Z-axis force: %s (err: %d)", resp.err_msg, resp.err);
-        return resp.err;
-    }
-
-    *z_force = resp.resp_buffer[0];
-    LOG_DBG("Trackpoint Z-force is %d", *z_force);
-    return 0;
-}
 
 int zmk_mouse_ps2_activity_reporting_enable() {
     struct zmk_mouse_ps2_data *data = &zmk_mouse_ps2_data;
@@ -1608,6 +1592,24 @@ int zmk_mouse_ps2_tp_value6_upper_plateau_speed_change(int amount) {
     }
 
     return err;
+}
+
+/*
+ * Z-Force API
+ */
+
+int zmk_mouse_ps2_tp_z_force_get(uint8_t *z_force) {
+
+    struct zmk_mouse_ps2_send_cmd_resp resp = zmk_mouse_ps2_send_cmd(
+        MOUSE_PS2_CMD_TP_GET_Z_FORCE, sizeof(MOUSE_PS2_CMD_TP_GET_Z_FORCE), NULL, MOUSE_PS2_CMD_TP_GET_Z_FORCE_RESP_LEN, true);
+    if (resp.err) {
+        LOG_ERR("Could not get Z-axis force: %s (err: %d)", resp.err_msg, resp.err);
+        return resp.err;
+    }
+
+    uint8_t zforce = resp.resp_buffer[0];
+    LOG_DBG("Trackpoint Z-force is %d", zforce);
+    return 0;
 }
 
 int zmk_mouse_ps2_tp_pts_threshold_get(uint8_t *pts_threshold) {
