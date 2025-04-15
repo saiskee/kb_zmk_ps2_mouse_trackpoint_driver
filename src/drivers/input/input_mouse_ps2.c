@@ -851,7 +851,7 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
     const struct zmk_mouse_ps2_config *config = &zmk_mouse_ps2_config;
     int ret = 0;
     int64_t current_time_ms = k_uptime_get();
-    static uint8_t current_ram_addr = 0; // Current RAM address to read
+    static uint8_t current_ram_addr = 0x27; // Current RAM address to read
     static int move_counter = 0;         // Counter for throttling reads
 
     bool have_x = zmk_mouse_ps2_is_non_zero_1d_movement(mov_x);
