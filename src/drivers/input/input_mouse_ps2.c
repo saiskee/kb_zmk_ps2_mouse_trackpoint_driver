@@ -1671,7 +1671,7 @@ int zmk_mouse_ps2_tp_z_force_get(uint8_t *z_force) {
     }
 
     *z_force = resp.resp_buffer[0];
-    LOG_DBG("Trackpoint Z-force is %d", *z_force);
+    LOG_DBG("Trackpoint xmsb is %d", *z_force);
     return 0;
 }
 
