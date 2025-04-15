@@ -750,7 +750,7 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
         // Get and log the Z-axis force for every movement
         if (data->is_trackpoint) {
             uint8_t z_force = 0;
-            int z_err = zmk_mouse_ps2_tp_z_force_get(&z_force);
+            int z_err = zmk_mouse_ps2_tp_sensitivity_get(&z_force);
             if (z_err == 0) {
                 LOG_WRN("Movement with Z-FORCE: %d, X: %d, Y: %d", z_force, mov_x, mov_y);
             } else {
