@@ -83,7 +83,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define MOUSE_PS2_CMD_TP_SET_CONFIG_BYTE_RESP_LEN 0
 
 #define MOUSE_PS2_ST_TP_SENSITIVITY "tp_sensitivity"
-#define MOUSE_PS2_CMD_TP_GET_SENSITIVITY "\xe2\x80\x3f"
+#define MOUSE_PS2_CMD_TP_GET_SENSITIVITY "\xe2\x80\x4a"
 #define MOUSE_PS2_CMD_TP_GET_SENSITIVITY_RESP_LEN 1
 
 #define MOUSE_PS2_CMD_TP_SET_SENSITIVITY "\xe2\x81\x4a"
@@ -113,7 +113,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define MOUSE_PS2_CMD_TP_SET_VALUE6_UPPER_PLATEAU_SPEED_DEFAULT 0x61
 
 #define MOUSE_PS2_ST_TP_Z_FORCE "tp_z_force"
-#define MOUSE_PS2_CMD_TP_GET_Z_FORCE "\xe2\x3d"
+#define MOUSE_PS2_CMD_TP_GET_Z_FORCE "\xe2\x80\x3e"
 #define MOUSE_PS2_CMD_TP_GET_Z_FORCE_RESP_LEN 1
 
 #define MOUSE_PS2_ST_TP_PTS_THRESHOLD "tp_pts_threshold"
@@ -750,7 +750,7 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
         // Get and log the Z-axis force for every movement
         if (data->is_trackpoint) {
             uint8_t z_force = 0;
-            int z_err = zmk_mouse_ps2_tp_sensitivity_get(&z_force);
+            int z_err = zmk_mouse_ps2_tp_z_force_get(&z_force);
             if (z_err == 0) {
                 LOG_WRN("Movement with Z-FORCE: %d, X: %d, Y: %d", z_force, mov_x, mov_y);
             } else {
