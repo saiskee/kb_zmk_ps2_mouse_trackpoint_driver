@@ -691,31 +691,28 @@ void zmk_mouse_ps2_activity_click_buttons(bool button_l, bool button_m, bool but
         return;
     }
 
-    // Check if any button state has changed from the previously tracked state
-    if (button_l != data->button_l_is_held) {
-        // Report left button state change
-        input_report_key(data->dev, INPUT_BTN_LEFT, button_l, false, K_FOREVER);
+    // Track which buttons need reporting
+    bool need_report_l = (button_l != data->button_l_is_held);
+    bool need_report_m = (button_m != data->button_m_is_held);
+    bool need_report_r = (button_r != data->button_r_is_held);
+
+    // Only set sync to true on the last report
+    if (need_report_l) {
+        bool is_last_report = !(need_report_m || need_report_r);
+        input_report_key(data->dev, INPUT_BTN_LEFT, button_l, is_last_report, K_FOREVER);
         data->button_l_is_held = button_l;
     }
 
-    if (button_m != data->button_m_is_held) {
-        // Report middle button state change
-        input_report_key(data->dev, INPUT_BTN_MIDDLE, button_m, false, K_FOREVER);
+    if (need_report_m) {
+        bool is_last_report = !need_report_r;
+        input_report_key(data->dev, INPUT_BTN_MIDDLE, button_m, is_last_report, K_FOREVER);
         data->button_m_is_held = button_m;
     }
 
-    if (button_r != data->button_r_is_held) {
-        // Report right button state change
-        input_report_key(data->dev, INPUT_BTN_RIGHT, button_r, false, K_FOREVER);
+    if (need_report_r) {
+        // Always sync on the last report
+        input_report_key(data->dev, INPUT_BTN_RIGHT, button_r, true, K_FOREVER);
         data->button_r_is_held = button_r;
-    }
-
-    // If any button state has changed, send a sync report
-    if (button_l != data->button_l_is_held ||
-        button_m != data->button_m_is_held ||
-        button_r != data->button_r_is_held) {
-        // Send a sync event by using input_report with sync=true
-        input_report(data->dev, INPUT_EV_KEY, 0, 0, true, K_FOREVER);
     }
 }
 
