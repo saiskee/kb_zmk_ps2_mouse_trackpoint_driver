@@ -765,6 +765,8 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
             uint8_t z_force = 0;
             if (zmk_mouse_ps2_tp_z_force_get(&z_force) == 0) {
                 LOG_WRN("Movement with Z-FORCE: %d, X: %d, Y: %d", z_force, mov_x, mov_y);
+            } else {
+                LOG_WRN("Movement without Z-FORCE: X: %d, Y: %d", mov_x, mov_y);
             }
         }
 
