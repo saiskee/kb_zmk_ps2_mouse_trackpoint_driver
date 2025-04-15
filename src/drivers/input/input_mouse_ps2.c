@@ -642,7 +642,37 @@ static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
             // Reset double tap tracking since a drag occurred
             data->last_was_tap = false;
         } else {
-            // Not a tap or drag, reset double tap tracking
+            // Not a tap or drag, log detailed failure reason
+            char reason[128] = "";
+
+            if (total_duration < TAP_MIN_DURATION_MS) {
+                snprintf(reason, sizeof(reason), "duration too short (%lld ms < %d ms)",
+                        total_duration, TAP_MIN_DURATION_MS);
+            }
+            else if (total_duration > TAP_MAX_DURATION_MS) {
+                snprintf(reason, sizeof(reason), "duration too long (%lld ms > %d ms)",
+                        total_duration, TAP_MAX_DURATION_MS);
+            }
+            else if (data->movement_count < TAP_MIN_EVENTS) {
+                snprintf(reason, sizeof(reason), "too few events (%d < %d)",
+                        data->movement_count, TAP_MIN_EVENTS);
+            }
+            else if (data->movement_count > TAP_MAX_EVENTS) {
+                snprintf(reason, sizeof(reason), "too many events (%d > %d)",
+                        data->movement_count, TAP_MAX_EVENTS);
+            }
+            else if (data->total_movement_distance > TAP_MAX_DISTANCE) {
+                snprintf(reason, sizeof(reason), "distance too large (%d > %d)",
+                        data->total_movement_distance, TAP_MAX_DISTANCE);
+            }
+            else {
+                snprintf(reason, sizeof(reason), "unknown reason");
+            }
+
+            LOG_WRN("NOT A TAP - %s (duration=%lld ms, events=%d, distance=%d)",
+                   reason, total_duration, data->movement_count, data->total_movement_distance);
+
+            // Reset double tap tracking
             data->last_was_tap = false;
         }
 
