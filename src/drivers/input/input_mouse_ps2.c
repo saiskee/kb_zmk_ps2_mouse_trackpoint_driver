@@ -153,8 +153,6 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define TAP_MAX_DURATION_MS 80      // Maximum duration for a tap (reduced from 100ms)
 #define TAP_MIN_DURATION_MS 5       // Minimum duration for a tap to be considered valid
 #define TAP_DOUBLE_TAP_TIMEOUT_MS 300  // Maximum time between taps for double tap
-#define TAP_MAX_EVENTS 6            // Maximum number of events for a tap (reduced from 10)
-#define TAP_MIN_EVENTS 2            // Minimum number of events for a tap to be considered valid
 #define TAP_MAX_DISTANCE 100          // Maximum total distance for a tap (sum of absolute X and Y movement)
 #define DEFAULT_INITIAL_MOVEMENT_DELAY_MS TAP_MAX_DURATION_MS  // Default delay for initial mouse movement reporting
 
@@ -323,6 +321,7 @@ static int allowed_sampling_rates[] = {
  */
 
 int zmk_mouse_ps2_settings_save();
+int zmk_mouse_ps2_tp_z_force_get(uint8_t *z_force);
 
 /*
  * Helpers
@@ -330,6 +329,24 @@ int zmk_mouse_ps2_settings_save();
 
 #define MOUSE_PS2_GET_BIT(data, bit_pos) ((data >> bit_pos) & 0x1)
 #define MOUSE_PS2_SET_BIT(data, bit_val, bit_pos) (data |= (bit_val) << bit_pos)
+
+/*
+ * Z-Force API
+ */
+
+int zmk_mouse_ps2_tp_z_force_get(uint8_t *z_force) {
+    char cmd[] = {0xE2, 0x80, 0x20};
+    struct zmk_mouse_ps2_send_cmd_resp resp = zmk_mouse_ps2_send_cmd(
+        cmd, sizeof(cmd), NULL, 1, true);
+    if (resp.err) {
+        LOG_ERR("Could not get Z-axis force");
+        return resp.err;
+    }
+
+    *z_force = resp.resp_buffer[0];
+    LOG_DBG("Trackpoint Z-force is %d", *z_force);
+    return 0;
+}
 
 /*
  * Mouse Activity Packet Reading
@@ -579,22 +596,19 @@ static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
         // Calculate total movement duration
         int64_t total_duration = data->last_movement_time_ms - data->first_movement_time_ms;
 
-        // Ignore very short taps with only one event (likely noise or spurious inputs)
-        if (total_duration < TAP_MIN_DURATION_MS && data->movement_count < TAP_MIN_EVENTS) {
-            LOG_WRN("IGNORING SPURIOUS TAP - too short (%lld ms) with too few events (%d)",
-                   total_duration, data->movement_count);
+        // Ignore very short taps (likely noise or spurious inputs)
+        if (total_duration < TAP_MIN_DURATION_MS) {
+            LOG_WRN("IGNORING SPURIOUS TAP - too short (%lld ms)", total_duration);
         }
         // Check if this was a tap (short duration movement with minimal distance)
-        // A tap should be a very short duration movement with few events and little distance traveled
+        // A tap should be a very short duration movement with little distance traveled
         else if (total_duration <= TAP_MAX_DURATION_MS &&
                 total_duration >= TAP_MIN_DURATION_MS &&
                 !data->is_dragging &&
-                data->movement_count <= TAP_MAX_EVENTS &&
-                data->movement_count >= TAP_MIN_EVENTS &&
                 data->total_movement_distance <= TAP_MAX_DISTANCE) {
 
-            LOG_WRN("TAP DETECTED with duration %lld ms, %d events, distance %d",
-                    total_duration, data->movement_count, data->total_movement_distance);
+            LOG_WRN("TAP DETECTED with duration %lld ms, distance %d",
+                    total_duration, data->total_movement_distance);
 
             /* Commenting out movement reversal code as it's overshooting
             // Undo the accumulated movement
@@ -653,14 +667,6 @@ static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
             else if (total_duration > TAP_MAX_DURATION_MS) {
                 snprintf(reason, sizeof(reason), "duration too long (%lld ms > %d ms)",
                         total_duration, TAP_MAX_DURATION_MS);
-            }
-            else if (data->movement_count < TAP_MIN_EVENTS) {
-                snprintf(reason, sizeof(reason), "too few events (%d < %d)",
-                        data->movement_count, TAP_MIN_EVENTS);
-            }
-            else if (data->movement_count > TAP_MAX_EVENTS) {
-                snprintf(reason, sizeof(reason), "too many events (%d > %d)",
-                        data->movement_count, TAP_MAX_EVENTS);
             }
             else if (data->total_movement_distance > TAP_MAX_DISTANCE) {
                 snprintf(reason, sizeof(reason), "distance too large (%d > %d)",
@@ -754,6 +760,14 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
     bool have_y = zmk_mouse_ps2_is_non_zero_1d_movement(mov_y);
 
     if (have_x || have_y) {
+        // Get and log the Z-axis force for every movement
+        if (data->is_trackpoint) {
+            uint8_t z_force = 0;
+            if (zmk_mouse_ps2_tp_z_force_get(&z_force) == 0) {
+                LOG_WRN("Movement with Z-FORCE: %d, X: %d, Y: %d", z_force, mov_x, mov_y);
+            }
+        }
+
         // Cancel any pending tap timer
         k_work_cancel_delayable(&data->tap_timer);
 
@@ -798,12 +812,6 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
                 if (movement_duration > TAP_MAX_DURATION_MS) {
                     LOG_WRN("DRAG DETECTED - duration exceeded: %lld ms > %d ms",
                            movement_duration, TAP_MAX_DURATION_MS);
-                    data->is_dragging = true;
-                    data->tap_in_progress = false;
-                }
-                else if (data->movement_count > TAP_MAX_EVENTS) {
-                    LOG_WRN("DRAG DETECTED - too many events: %d > %d",
-                           data->movement_count, TAP_MAX_EVENTS);
                     data->is_dragging = true;
                     data->tap_in_progress = false;
                 }
