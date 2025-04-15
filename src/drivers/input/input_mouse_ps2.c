@@ -166,6 +166,7 @@ struct zmk_mouse_ps2_config {
     bool scroll_mode;
     bool disable_clicking;
     int sampling_rate;
+    int initial_movement_delay_ms;  // Added configurable initial movement delay
 
     bool tp_press_to_select;
     int tp_press_to_select_threshold;
@@ -252,6 +253,7 @@ static const struct zmk_mouse_ps2_config zmk_mouse_ps2_config = {
     .scroll_mode = DT_INST_PROP_OR(0, scroll_mode, false),
     .disable_clicking = DT_INST_PROP_OR(0, disable_clicking, false),
     .sampling_rate = DT_INST_PROP_OR(0, sampling_rate, MOUSE_PS2_CMD_SET_SAMPLING_RATE_DEFAULT),
+    .initial_movement_delay_ms = DT_INST_PROP_OR(0, initial_movement_delay_ms, DEFAULT_INITIAL_MOVEMENT_DELAY_MS),
     .tp_press_to_select = DT_INST_PROP_OR(0, tp_press_to_select, false),
     .tp_press_to_select_threshold = DT_INST_PROP_OR(0, tp_press_to_select_threshold, -1),
     .tp_sensitivity = DT_INST_PROP_OR(0, tp_sensitivity, -1),
@@ -530,7 +532,7 @@ static bool zmk_mouse_ps2_is_non_zero_1d_movement(int16_t speed) { return speed 
 #define TAP_MAX_DURATION_MS 100     // Maximum duration for a tap
 #define TAP_DOUBLE_TAP_TIMEOUT_MS 300  // Maximum time between taps for double tap
 #define TAP_MAX_EVENTS 10           // Maximum number of events for a tap
-#define INITIAL_MOVEMENT_DELAY_MS 50  // Delay for initial mouse movement reporting
+#define DEFAULT_INITIAL_MOVEMENT_DELAY_MS 50  // Default delay for initial mouse movement reporting
 
 // Tap detection timer callback
 static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
@@ -686,6 +688,7 @@ static void zmk_mouse_ps2_init_tap_detection(struct zmk_mouse_ps2_data *data) {
 // Modified mouse movement function to report movements but track for potential reversal
 void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
     struct zmk_mouse_ps2_data *data = &zmk_mouse_ps2_data;
+    const struct zmk_mouse_ps2_config *config = &zmk_mouse_ps2_config;
     int ret = 0;
     int64_t current_time_ms = k_uptime_get();
 
@@ -704,12 +707,20 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
             data->tap_in_progress = true;
             data->accumulated_x = 0;
             data->accumulated_y = 0;
-            data->initial_delay_active = true;
 
-            // Start the initial delay timer
-            k_work_schedule(&data->initial_delay_timer, K_MSEC(INITIAL_MOVEMENT_DELAY_MS));
+            // Only enable initial delay if configured value is greater than 0
+            if (config->initial_movement_delay_ms > 0) {
+                data->initial_delay_active = true;
 
-            LOG_DBG("Movement started at %lld ms, initial delay active", current_time_ms);
+                // Start the initial delay timer with the configured delay
+                k_work_schedule(&data->initial_delay_timer, K_MSEC(config->initial_movement_delay_ms));
+
+                LOG_DBG("Movement started at %lld ms, initial delay of %d ms active",
+                       current_time_ms, config->initial_movement_delay_ms);
+            } else {
+                data->initial_delay_active = false;
+                LOG_DBG("Movement started at %lld ms, initial delay disabled", current_time_ms);
+            }
         } else {
             data->movement_count++;
 
