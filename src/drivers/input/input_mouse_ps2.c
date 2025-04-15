@@ -1004,7 +1004,7 @@ struct zmk_mouse_ps2_send_cmd_resp zmk_mouse_ps2_send_cmd(char *cmd, int cmd_len
  */
 
 int zmk_mouse_ps2_tp_z_force_get(uint8_t *z_force) {
-    char cmd[] = {0xE2, 0x80, 0x20};
+    char cmd[] = {0xE2, 0x80, 0x3F};
     struct zmk_mouse_ps2_send_cmd_resp resp = zmk_mouse_ps2_send_cmd(
         cmd, sizeof(cmd), NULL, 1, true);
     if (resp.err) {
