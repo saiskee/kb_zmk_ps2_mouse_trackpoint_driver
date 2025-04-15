@@ -1608,7 +1608,7 @@ int zmk_mouse_ps2_tp_z_force_get(uint8_t *z_force) {
     }
 
     uint8_t zforce = resp.resp_buffer[0];
-    LOG_DBG("Trackpoint Z-force is %d", zforce);
+    LOG_DBG("Trackpoint  (threshold) is %d", zforce);
     return 0;
 }
 
