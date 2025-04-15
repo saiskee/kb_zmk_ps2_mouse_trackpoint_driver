@@ -1011,7 +1011,7 @@ struct zmk_mouse_ps2_send_cmd_resp zmk_mouse_ps2_send_cmd(char *cmd, int cmd_len
 int zmk_mouse_ps2_tp_z_force_get(uint8_t *z_force) {
 
     struct zmk_mouse_ps2_send_cmd_resp resp = zmk_mouse_ps2_send_cmd(
-        MOUSE_PS2_CMD_TP_GET_Z_FORCE, MOUSE_PS2_CMD_TP_GET_Z_FORCE_RESP_LEN, NULL, 1, true);
+        MOUSE_PS2_CMD_TP_GET_Z_FORCE, MOUSE_PS2_CMD_TP_GET_Z_FORCE_RESP_LEN, NULL, 2, true);
     if (resp.err) {
         LOG_ERR("Could not get Z-axis force: %s (err: %d)", resp.err_msg, resp.err);
         return resp.err;
