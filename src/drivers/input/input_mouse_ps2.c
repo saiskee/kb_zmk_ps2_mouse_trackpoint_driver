@@ -750,10 +750,11 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
         // Get and log the Z-axis force for every movement
         if (data->is_trackpoint) {
             uint8_t z_force = 0;
-            if (zmk_mouse_ps2_tp_z_force_get(&z_force) == 0) {
+            int z_err = zmk_mouse_ps2_tp_z_force_get(&z_force);
+            if (z_err == 0) {
                 LOG_WRN("Movement with Z-FORCE: %d, X: %d, Y: %d", z_force, mov_x, mov_y);
             } else {
-                LOG_WRN("Movement without Z-FORCE: X: %d, Y: %d", mov_x, mov_y);
+                LOG_WRN("Movement without Z-FORCE (err: %d): X: %d, Y: %d", z_err, mov_x, mov_y);
             }
         }
 
@@ -1012,7 +1013,7 @@ int zmk_mouse_ps2_tp_z_force_get(uint8_t *z_force) {
     struct zmk_mouse_ps2_send_cmd_resp resp = zmk_mouse_ps2_send_cmd(
         MOUSE_PS2_CMD_TP_GET_Z_FORCE, MOUSE_PS2_CMD_TP_GET_Z_FORCE_RESP_LEN, NULL, 1, true);
     if (resp.err) {
-        LOG_ERR("Could not get Z-axis force");
+        LOG_ERR("Could not get Z-axis force: %s (err: %d)", resp.err_msg, resp.err);
         return resp.err;
     }
 
