@@ -215,6 +215,8 @@ struct zmk_mouse_ps2_data {
     int64_t last_tap_time_ms;        // Timestamp of the last tap
     bool tap_in_progress;            // Flag indicating tap detection is in progress
     struct k_work_delayable tap_timer; // Timer for detecting end of movement
+    int16_t accumulated_x;           // Accumulated X movement during potential tap
+    int16_t accumulated_y;           // Accumulated Y movement during potential tap
 
     bool activity_reporting_on;
     bool is_trackpoint;
@@ -556,6 +558,16 @@ static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
             LOG_WRN("TAP DETECTED with duration %lld ms, %d events",
                     total_duration, data->movement_count);
 
+            // Undo the accumulated movement
+            if (data->accumulated_x != 0) {
+                input_report_rel(data->dev, INPUT_REL_X, -data->accumulated_x, data->accumulated_y == 0, K_NO_WAIT);
+            }
+            if (data->accumulated_y != 0) {
+                input_report_rel(data->dev, INPUT_REL_Y, -data->accumulated_y, true, K_NO_WAIT);
+            }
+
+            LOG_DBG("Reversed movement (x=%d, y=%d)", data->accumulated_x, data->accumulated_y);
+
             // Check for double tap
             if (data->last_was_tap) {
                 int64_t time_between_taps = current_time_ms - data->last_tap_time_ms;
@@ -602,6 +614,8 @@ static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
         data->is_dragging = false;
         data->movement_count = 0;
         data->tap_in_progress = false;
+        data->accumulated_x = 0;
+        data->accumulated_y = 0;
     }
 }
 
@@ -616,12 +630,14 @@ static void zmk_mouse_ps2_init_tap_detection(struct zmk_mouse_ps2_data *data) {
     data->last_was_tap = false;
     data->last_tap_time_ms = 0;
     data->tap_in_progress = false;
+    data->accumulated_x = 0;
+    data->accumulated_y = 0;
 
     // Initialize the tap timer
     k_work_init_delayable(&data->tap_timer, zmk_mouse_ps2_tap_timer_callback);
 }
 
-// Modified mouse movement function with tap detection
+// Modified mouse movement function to report movements but track for potential reversal
 void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
     struct zmk_mouse_ps2_data *data = &zmk_mouse_ps2_data;
     int ret = 0;
@@ -631,8 +647,6 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
     bool have_y = zmk_mouse_ps2_is_non_zero_1d_movement(mov_y);
 
     if (have_x || have_y) {
-        // If movement is detected, update tap detection logic
-
         // Cancel any pending tap timer
         k_work_cancel_delayable(&data->tap_timer);
 
@@ -642,6 +656,8 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
             data->first_movement_time_ms = current_time_ms;
             data->movement_count = 1;
             data->tap_in_progress = true;
+            data->accumulated_x = 0;
+            data->accumulated_y = 0;
             LOG_DBG("Movement started at %lld ms", current_time_ms);
         } else {
             data->movement_count++;
@@ -668,18 +684,25 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
                           (TAP_COOLDOWN_TIMEOUT_MS / 2) : TAP_COOLDOWN_TIMEOUT_MS;
         k_work_schedule(&data->tap_timer, K_MSEC(timeout));
 
-        // Only report movement if we're not in a potential tap situation
-        // or if we've already determined this is a drag
-        if (!data->tap_in_progress || data->is_dragging) {
+        // Always report movement, but track it for potential reversal
+        if (data->tap_in_progress && !data->is_dragging) {
+            // Track accumulated movement for potential undo
             if (have_x) {
-                ret = input_report_rel(data->dev, INPUT_REL_X, mov_x, !have_y, K_NO_WAIT);
+                data->accumulated_x += mov_x;
             }
             if (have_y) {
-                ret = input_report_rel(data->dev, INPUT_REL_Y, mov_y, true, K_NO_WAIT);
+                data->accumulated_y += mov_y;
             }
-        } else {
-            // We're in a potential tap situation, suppress movement
-            LOG_DBG("Suppressing movement during potential tap (x=%d, y=%d)", mov_x, mov_y);
+            LOG_DBG("Tracking movement during potential tap (x=%d, y=%d), accumulated (x=%d, y=%d)",
+                   mov_x, mov_y, data->accumulated_x, data->accumulated_y);
+        }
+
+        // Always report the movement
+        if (have_x) {
+            ret = input_report_rel(data->dev, INPUT_REL_X, mov_x, !have_y, K_NO_WAIT);
+        }
+        if (have_y) {
+            ret = input_report_rel(data->dev, INPUT_REL_Y, mov_y, true, K_NO_WAIT);
         }
     }
 }
