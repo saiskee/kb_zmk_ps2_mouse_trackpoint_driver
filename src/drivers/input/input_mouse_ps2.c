@@ -113,7 +113,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define MOUSE_PS2_CMD_TP_SET_VALUE6_UPPER_PLATEAU_SPEED_DEFAULT 0x61
 
 #define MOUSE_PS2_ST_TP_Z_FORCE "tp_z_force"
-#define MOUSE_PS2_CMD_TP_GET_Z_FORCE "\xe2\x80\x5e"
+#define MOUSE_PS2_CMD_TP_GET_Z_FORCE "\xe2\x80\x1b"
 #define MOUSE_PS2_CMD_TP_GET_Z_FORCE_RESP_LEN 1
 
 #define MOUSE_PS2_ST_TP_PTS_THRESHOLD "tp_pts_threshold"
@@ -326,6 +326,7 @@ static int allowed_sampling_rates[] = {
 
 int zmk_mouse_ps2_settings_save();
 int zmk_mouse_ps2_tp_z_force_get(uint8_t *z_force);
+int zmk_mouse_ps2_tp_dump_ram();
 
 /*
  * Helpers
@@ -742,6 +743,7 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
     const struct zmk_mouse_ps2_config *config = &zmk_mouse_ps2_config;
     int ret = 0;
     int64_t current_time_ms = k_uptime_get();
+    static int movement_diagnostic_count = 0; // Counter for diagnostic dumps
 
     bool have_x = zmk_mouse_ps2_is_non_zero_1d_movement(mov_x);
     bool have_y = zmk_mouse_ps2_is_non_zero_1d_movement(mov_y);
@@ -755,6 +757,15 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
                 LOG_WRN("Movement with Z-FORCE: %d, X: %d, Y: %d", z_force, mov_x, mov_y);
             } else {
                 LOG_WRN("Movement without Z-FORCE (err: %d): X: %d, Y: %d", z_err, mov_x, mov_y);
+            }
+
+            // Periodically dump all RAM values when movement is detected
+            // Only do this rarely to avoid overwhelming logs
+            movement_diagnostic_count++;
+            if (movement_diagnostic_count >= 100) {
+                LOG_WRN("Periodic trackpoint RAM dump triggered after %d movements", movement_diagnostic_count);
+                zmk_mouse_ps2_tp_dump_ram();
+                movement_diagnostic_count = 0;
             }
         }
 
@@ -1598,17 +1609,69 @@ int zmk_mouse_ps2_tp_value6_upper_plateau_speed_change(int amount) {
  * Z-Force API
  */
 
-int zmk_mouse_ps2_tp_z_force_get(uint8_t *z_force) {
+int zmk_mouse_ps2_tp_dump_ram() {
+    LOG_WRN("Dumping trackpoint RAM values (0x00-0xFF):");
 
+    char row_values[50];
+    int success_count = 0;
+    int failure_count = 0;
+
+    for (int row = 0; row < 16; row++) {
+        memset(row_values, 0, sizeof(row_values));
+        char *pos = row_values;
+
+        // Print row header
+        pos += snprintf(pos, sizeof(row_values) - (pos - row_values), "%02X: ", row * 16);
+
+        for (int col = 0; col < 16; col++) {
+            uint8_t addr = (row * 16) + col;
+            uint8_t value = 0;
+
+            // Construct the command: 0xE2 0x80 <addr>
+            char cmd[4] = { 0xE2, 0x80, addr, 0 };
+
+            struct zmk_mouse_ps2_send_cmd_resp resp = zmk_mouse_ps2_send_cmd(
+                cmd, 3, NULL, 1, true);
+
+            if (resp.err) {
+                // Mark failed reads with XX
+                pos += snprintf(pos, sizeof(row_values) - (pos - row_values), "XX ");
+                failure_count++;
+            } else {
+                value = resp.resp_buffer[0];
+                pos += snprintf(pos, sizeof(row_values) - (pos - row_values), "%02X ", value);
+                success_count++;
+            }
+        }
+
+        LOG_WRN("%s", row_values);
+
+        // Add a small delay between rows to avoid overwhelming the trackpoint
+        k_sleep(K_MSEC(50));
+    }
+
+    LOG_WRN("RAM dump complete: %d values read successfully, %d failures",
+           success_count, failure_count);
+
+    return 0;
+}
+
+int zmk_mouse_ps2_tp_z_force_get(uint8_t *z_force) {
+    // Choose the appropriate RAM location for z-force
+    // Here we're using the command that was previously defined
     struct zmk_mouse_ps2_send_cmd_resp resp = zmk_mouse_ps2_send_cmd(
         MOUSE_PS2_CMD_TP_GET_Z_FORCE, sizeof(MOUSE_PS2_CMD_TP_GET_Z_FORCE), NULL, MOUSE_PS2_CMD_TP_GET_Z_FORCE_RESP_LEN, true);
     if (resp.err) {
         LOG_ERR("Could not get Z-axis force: %s (err: %d)", resp.err_msg, resp.err);
+
+        // When Z-force reading fails, dump all RAM values to help diagnose
+        zmk_mouse_ps2_tp_dump_ram();
+
         return resp.err;
     }
 
-    uint8_t zforce = resp.resp_buffer[0];
-    LOG_DBG("Trackpoint xyzavg is %d", zforce);
+    *z_force = resp.resp_buffer[0];
+    LOG_DBG("Trackpoint Z-force is %d", *z_force);
     return 0;
 }
 
@@ -2134,3 +2197,20 @@ int zmk_mouse_ps2_init_wait_for_mouse(const struct device *dev) {
 
 DEVICE_DT_INST_DEFINE(0, &zmk_mouse_ps2_init, NULL, &zmk_mouse_ps2_data, &zmk_mouse_ps2_config,
                       POST_KERNEL, ZMK_MOUSE_PS2_INIT_PRIORITY, NULL);
+
+/*
+ * Public API for debug functions
+ */
+
+// This function can be called directly from other modules to dump trackpoint RAM
+int zmk_mouse_ps2_debug_dump_trackpoint_ram(void) {
+    struct zmk_mouse_ps2_data *data = &zmk_mouse_ps2_data;
+
+    if (!data->is_trackpoint) {
+        LOG_WRN("Device is not a trackpoint, cannot dump RAM");
+        return -1;
+    }
+
+    LOG_WRN("Manual trackpoint RAM dump triggered");
+    return zmk_mouse_ps2_tp_dump_ram();
+}
