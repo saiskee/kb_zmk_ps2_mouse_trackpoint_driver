@@ -877,7 +877,7 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
                 char cmd[3] = { 0xE2, 0x80, current_ram_addr };
 
                 struct zmk_mouse_ps2_send_cmd_resp resp = zmk_mouse_ps2_send_cmd(
-                    cmd, 3, NULL, 1, true);
+                    "\xe2\x80\x2f", 3, NULL, 1, true);
 
                 if (resp.err) {
                     LOG_WRN("RAM[0x%02X] read failed: %s (err: %d)",
