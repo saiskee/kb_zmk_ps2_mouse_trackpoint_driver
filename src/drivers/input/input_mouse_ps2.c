@@ -873,6 +873,9 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
             if (move_counter >= 3) { // Only read every 3rd movement to avoid flooding
                 move_counter = 0;
 
+                // iterate current_ram_addr 16 times
+
+            for (int i = 0; i < 16; i++) {
                 // Construct the command: 0xE2 0x80 <addr>
                 char cmd[4] = { 0xE2, 0x80, current_ram_addr, 0 };
 
@@ -891,7 +894,8 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
                 current_ram_addr++;
                 // Optional: wrap around to create a continuous cycle
                 if (current_ram_addr > 0xFF) {
-                    current_ram_addr = 0x00;
+                        current_ram_addr = 0x00;
+                    }
                 }
             }
         }
