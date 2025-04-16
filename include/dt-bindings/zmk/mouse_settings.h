@@ -22,3 +22,4 @@
 
 #define MS_TP_RAM_ADDR_INCR 18
 #define MS_TP_RAM_ADDR_DECR 19
+#define MS_TP_RAM_ADDR_READ 20

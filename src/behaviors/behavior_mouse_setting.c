@@ -47,6 +47,8 @@ static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
         return zmk_mouse_ps2_tp_ram_addr_change(INCREMENT_TP_RAM_ADDR);
     case MS_TP_RAM_ADDR_DECR:
         return zmk_mouse_ps2_tp_ram_addr_change(-INCREMENT_TP_RAM_ADDR);
+    case MS_TP_RAM_ADDR_READ:
+        return zmk_mouse_ps2_tp_read_ram_addr();
     }
 
     return -ENOTSUP;

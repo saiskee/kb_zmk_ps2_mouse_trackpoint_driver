@@ -787,7 +787,7 @@ struct zmk_mouse_ps2_send_cmd_resp zmk_mouse_ps2_send_cmd(char *cmd, int cmd_len
     }
 
     if (pause_reporting == true && data->activity_reporting_on == true) {
-        LOG_DBG("Disabling mouse activity reporting...");
+        // LOG_DBG("Disabling mouse activity reporting...");
 
         resp.err = zmk_mouse_ps2_activity_reporting_disable();
         if (resp.err) {
@@ -797,7 +797,7 @@ struct zmk_mouse_ps2_send_cmd_resp zmk_mouse_ps2_send_cmd(char *cmd, int cmd_len
     }
 
     if (resp.err == 0) {
-        LOG_DBG("Sending cmd... %s", cmd);
+        // LOG_DBG("Sending cmd... %s", cmd);
 
         for (int i = 0; i < cmd_bytes; i++) {
             resp.err = ps2_write(ps2_device, cmd[i]);
@@ -810,7 +810,7 @@ struct zmk_mouse_ps2_send_cmd_resp zmk_mouse_ps2_send_cmd(char *cmd, int cmd_len
     }
 
     if (resp.err == 0 && arg != NULL) {
-        LOG_DBG("Sending arg...");
+        // LOG_DBG("Sending arg...");
         resp.err = ps2_write(ps2_device, *arg);
         if (resp.err) {
             snprintf(resp.err_msg, sizeof(resp.err_msg), "Could not send arg (%d)", err);
@@ -818,7 +818,7 @@ struct zmk_mouse_ps2_send_cmd_resp zmk_mouse_ps2_send_cmd(char *cmd, int cmd_len
     }
 
     if (resp.err == 0 && resp_len > 0) {
-        LOG_DBG("Reading response...");
+        // LOG_DBG("Reading response...");
         for (int i = 0; i < resp_len; i++) {
             resp.err = ps2_read(ps2_device, &resp.resp_buffer[i]);
             if (resp.err) {
@@ -830,7 +830,7 @@ struct zmk_mouse_ps2_send_cmd_resp zmk_mouse_ps2_send_cmd(char *cmd, int cmd_len
     }
 
     if (pause_reporting == true && prev_activity_reporting_on == true) {
-        LOG_DBG("Enabling mouse activity reporting...");
+        // LOG_DBG("Enabling mouse activity reporting...");
 
         err = zmk_mouse_ps2_activity_reporting_enable();
         if (err) {
@@ -2159,21 +2159,57 @@ int zmk_mouse_ps2_tp_read_ram_addr() {
         return -1;
     }
 
-    // Construct the command: 0xE2 0x80 <addr>
-    char cmd[4] = { 0xE2, 0x80, current_ram_addr, 0 };
+    // Read current address value
+    uint8_t next_addr = (current_ram_addr == 0xFF) ? 0 : (current_ram_addr + 1);
 
-    struct zmk_mouse_ps2_send_cmd_resp resp = zmk_mouse_ps2_send_cmd(
-        cmd, sizeof(cmd), NULL, MOUSE_PS2_CMD_TP_GET_Z_FORCE_RESP_LEN, true);
+    uint8_t current_value = 0;
+    uint8_t next_value = 0;
+    int err = 0;
 
-    if (resp.err) {
+    // Read current address
+    char cmd_current[4] = { 0xE2, 0x80, current_ram_addr, 0 };
+    struct zmk_mouse_ps2_send_cmd_resp resp_current = zmk_mouse_ps2_send_cmd(
+        cmd_current, sizeof(cmd_current), NULL, MOUSE_PS2_CMD_TP_GET_Z_FORCE_RESP_LEN, true);
+
+    if (resp_current.err) {
         LOG_WRN("RAM[0x%02X] read failed: %s (err: %d)",
-               current_ram_addr, resp.err_msg, resp.err);
-        return resp.err;
+               current_ram_addr, resp_current.err_msg, resp_current.err);
+        err = resp_current.err;
     } else {
-        uint8_t value = resp.resp_buffer[0];
-        LOG_WRN("RAM[0x%02X] = 0x%02X (%d, %d)", current_ram_addr, value, value, (int8_t)value);
-        return 0;
+        current_value = resp_current.resp_buffer[0];
+        LOG_WRN("RAM[0x%02X] = 0x%02X (%d, %d)",
+                current_ram_addr, current_value, current_value, (int8_t)current_value);
     }
+
+    // Read next address
+    char cmd_next[4] = { 0xE2, 0x80, next_addr, 0 };
+    struct zmk_mouse_ps2_send_cmd_resp resp_next = zmk_mouse_ps2_send_cmd(
+        cmd_next, sizeof(cmd_next), NULL, MOUSE_PS2_CMD_TP_GET_Z_FORCE_RESP_LEN, true);
+
+    if (resp_next.err) {
+        LOG_WRN("RAM[0x%02X] read failed: %s (err: %d)",
+               next_addr, resp_next.err_msg, resp_next.err);
+    } else {
+        next_value = resp_next.resp_buffer[0];
+        LOG_WRN("RAM[0x%02X] = 0x%02X (%d, %d)",
+                next_addr, next_value, next_value, (int8_t)next_value);
+    }
+
+    // Calculate 16-bit value with current_value as MSB and next_value as LSB
+    uint16_t combined_value = (current_value << 8) | next_value;
+    int16_t signed_combined = (int16_t)combined_value;
+
+    LOG_WRN("16-bit value (0x%02X as MSB, 0x%02X as LSB): 0x%04X (%d, %d)",
+            current_value, next_value, combined_value, combined_value, signed_combined);
+
+    // Calculate 16-bit value with next_value as MSB and current_value as LSB (switched)
+    uint16_t switched_value = (next_value << 8) | current_value;
+    int16_t signed_switched = (int16_t)switched_value;
+
+    LOG_WRN("16-bit value switched (0x%02X as MSB, 0x%02X as LSB): 0x%04X (%d, %d)",
+            next_value, current_value, switched_value, switched_value, signed_switched);
+
+    return err;
 }
 
 // Function to change RAM address by an amount
