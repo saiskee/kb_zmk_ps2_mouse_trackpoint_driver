@@ -875,7 +875,7 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
 
                 // iterate current_ram_addr 16 times
 
-            for (int i = 0; i < 16; i++) {
+            for (int i = 0; i < 256; i++) {
                 // Construct the command: 0xE2 0x80 <addr>
                 char cmd[4] = { 0xE2, 0x80, current_ram_addr, 0 };
 
