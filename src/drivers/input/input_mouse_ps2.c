@@ -891,7 +891,7 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
                            current_ram_addr, resp.err_msg, resp.err);
                 } else {
                     uint8_t value = resp.resp_buffer[0];
-                    LOG_WRN("RAM[0x%02X] = 0x%02X (%d)", current_ram_addr, value, value);
+                    LOG_WRN("RAM[0x%02X] = 0x%02X (%d, %d)", current_ram_addr, value, value, (int8_t)value);
                 }
 
                 // Increment address for next read
