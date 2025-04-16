@@ -11,6 +11,7 @@
 #define INCREMENT_TP_NEG_INERTIA 1
 #define INCREMENT_TP_VALUE6 5
 #define INCREMENT_TP_PTS_THRESHOLD 1
+#define INCREMENT_TP_RAM_ADDR 1
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
@@ -41,6 +42,11 @@ static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
         return zmk_mouse_ps2_tp_pts_threshold_change(INCREMENT_TP_PTS_THRESHOLD);
     case MS_TP_PTS_THRESHOLD_DECR:
         return zmk_mouse_ps2_tp_pts_threshold_change(-INCREMENT_TP_PTS_THRESHOLD);
+
+    case MS_TP_RAM_ADDR_INCR:
+        return zmk_mouse_ps2_tp_ram_addr_change(INCREMENT_TP_RAM_ADDR);
+    case MS_TP_RAM_ADDR_DECR:
+        return zmk_mouse_ps2_tp_ram_addr_change(-INCREMENT_TP_RAM_ADDR);
     }
 
     return -ENOTSUP;

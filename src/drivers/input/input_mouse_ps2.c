@@ -21,6 +21,9 @@
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
+// Add this at the beginning of the file, outside any function
+static uint8_t current_ram_addr = 0x2F; // Global RAM address to read
+
 /*
  * Settings
  */
@@ -326,7 +329,6 @@ static int allowed_sampling_rates[] = {
 
 int zmk_mouse_ps2_settings_save();
 int zmk_mouse_ps2_tp_z_force_get(uint8_t *z_force);
-int zmk_mouse_ps2_tp_dump_ram();
 
 /*
  * Helpers
@@ -851,7 +853,6 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
     const struct zmk_mouse_ps2_config *config = &zmk_mouse_ps2_config;
     int ret = 0;
     int64_t current_time_ms = k_uptime_get();
-    static uint8_t current_ram_addr = 0x2F; // Current RAM address to read
     static int move_counter = 0;         // Counter for throttling reads
 
     bool have_x = zmk_mouse_ps2_is_non_zero_1d_movement(mov_x);
@@ -868,39 +869,13 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
                 LOG_WRN("Movement without Z-FORCE (err: %d): X: %d, Y: %d", z_err, mov_x, mov_y);
             }
 
-            // Increment and read a different memory location every few movements
+            // Increment and read a memory location every few movements
             move_counter++;
             if (move_counter >= 3) { // Only read every 3rd movement to avoid flooding
                 move_counter = 0;
 
-                // iterate current_ram_addr 16 times
-                // Iterate over specific RAM addresses of interest
-                uint8_t addresses_of_interest[] = {0xe8, 0xe2};
-                for (int i = 0; i < sizeof(addresses_of_interest); i++) {
-                    current_ram_addr = addresses_of_interest[i];
-
-            // for (int i = 0; i < 256; i++) {
-                // Construct the command: 0xE2 0x80 <addr>
-                char cmd[4] = { 0xE2, 0x80, current_ram_addr, 0 };
-
-                struct zmk_mouse_ps2_send_cmd_resp resp = zmk_mouse_ps2_send_cmd(
-                   cmd, sizeof(cmd), NULL, MOUSE_PS2_CMD_TP_GET_Z_FORCE_RESP_LEN, true);
-
-                if (resp.err) {
-                    LOG_WRN("RAM[0x%02X] read failed: %s (err: %d)",
-                           current_ram_addr, resp.err_msg, resp.err);
-                } else {
-                    uint8_t value = resp.resp_buffer[0];
-                    LOG_WRN("RAM[0x%02X] = 0x%02X (%d, %d)", current_ram_addr, value, value, (int8_t)value);
-                }
-
-                // Increment address for next read
-                current_ram_addr++;
-                // Optional: wrap around to create a continuous cycle
-                if (current_ram_addr > 0xFF) {
-                        current_ram_addr = 0x00;
-                    }
-                }
+                // Use the read_ram_addr function to read the current RAM address
+                zmk_mouse_ps2_tp_read_ram_addr();
             }
         }
 
@@ -1042,7 +1017,6 @@ void zmk_mouse_ps2_activity_click_buttons(bool button_l, bool button_m, bool but
         data->button_r_is_held = button_r;
     }
 }
-
 
 
 
@@ -2176,19 +2150,39 @@ int zmk_mouse_ps2_init_wait_for_mouse(const struct device *dev) {
 DEVICE_DT_INST_DEFINE(0, &zmk_mouse_ps2_init, NULL, &zmk_mouse_ps2_data, &zmk_mouse_ps2_config,
                       POST_KERNEL, ZMK_MOUSE_PS2_INIT_PRIORITY, NULL);
 
-/*
- * Public API for debug functions
- */
-
-// This function can be called directly from other modules to dump trackpoint RAM
-int zmk_mouse_ps2_debug_dump_trackpoint_ram(void) {
+// Function to read current RAM address value
+int zmk_mouse_ps2_tp_read_ram_addr() {
     struct zmk_mouse_ps2_data *data = &zmk_mouse_ps2_data;
 
     if (!data->is_trackpoint) {
-        LOG_WRN("Device is not a trackpoint, cannot dump RAM");
+        LOG_WRN("Device is not a trackpoint, cannot read RAM");
         return -1;
     }
 
-    LOG_WRN("Manual trackpoint RAM dump triggered");
-    return zmk_mouse_ps2_tp_dump_ram();
+    // Construct the command: 0xE2 0x80 <addr>
+    char cmd[4] = { 0xE2, 0x80, current_ram_addr, 0 };
+
+    struct zmk_mouse_ps2_send_cmd_resp resp = zmk_mouse_ps2_send_cmd(
+        cmd, sizeof(cmd), NULL, MOUSE_PS2_CMD_TP_GET_Z_FORCE_RESP_LEN, true);
+
+    if (resp.err) {
+        LOG_WRN("RAM[0x%02X] read failed: %s (err: %d)",
+               current_ram_addr, resp.err_msg, resp.err);
+        return resp.err;
+    } else {
+        uint8_t value = resp.resp_buffer[0];
+        LOG_WRN("RAM[0x%02X] = 0x%02X (%d, %d)", current_ram_addr, value, value, (int8_t)value);
+        return 0;
+    }
 }
+
+// Function to change RAM address by an amount
+int zmk_mouse_ps2_tp_ram_addr_change(int amount) {
+    current_ram_addr += amount;
+    LOG_WRN("Current RAM address changed to: 0x%02X", current_ram_addr);
+
+    // Read the new RAM address immediately
+    return zmk_mouse_ps2_tp_read_ram_addr();
+}
+
+
