@@ -861,126 +861,126 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
     if (have_x || have_y) {
         // Get and log the Z-axis force for every movement
         if (data->is_trackpoint) {
-            // uint8_t z_force = 0;
-            // int z_err = zmk_mouse_ps2_tp_z_force_get(&z_force);
-            // if (z_err == 0) {
-            //     LOG_WRN("Movement with Z-FORCE: %d, X: %d, Y: %d", z_force, mov_x, mov_y);
-            // } else {
-            //     LOG_WRN("Movement without Z-FORCE (err: %d): X: %d, Y: %d", z_err, mov_x, mov_y);
-            // }
+            uint8_t z_force = 0;
+            int z_err = zmk_mouse_ps2_tp_z_force_get(&z_force);
+            if (z_err == 0) {
+                LOG_WRN("Movement with Z-FORCE: %d, X: %d, Y: %d", z_force, mov_x, mov_y);
+            } else {
+                LOG_WRN("Movement without Z-FORCE (err: %d): X: %d, Y: %d", z_err, mov_x, mov_y);
+            }
 
             // Increment and read a memory location every few movements
-            move_counter++;
-            if (move_counter >= 3) { // Only read every 3rd movement to avoid flooding
-                move_counter = 0;
+    //         move_counter++;
+    //         if (move_counter >= 3) { // Only read every 3rd movement to avoid flooding
+    //             move_counter = 0;
 
-    //             // Use the read_ram_addr function to read the current RAM address
-                zmk_mouse_ps2_tp_read_ram_addr();
+    // //             // Use the read_ram_addr function to read the current RAM address
+    //             zmk_mouse_ps2_tp_read_ram_addr();
+    //         }
+        }
+
+        // Cancel any pending tap timer
+        k_work_cancel_delayable(&data->tap_timer);
+
+        // Track total movement distance
+        int16_t this_movement = abs(mov_x) + abs(mov_y);
+        data->total_movement_distance += this_movement;
+
+        // If this is the start of a new movement sequence
+        if (!data->is_moving) {
+            data->is_moving = true;
+            data->first_movement_time_ms = current_time_ms;
+            data->movement_count = 1;
+            data->tap_in_progress = true;
+            data->accumulated_x = 0;
+            data->accumulated_y = 0;
+            data->total_movement_distance = this_movement;
+
+            LOG_WRN("MOVEMENT START with initial distance %d", this_movement);
+
+            // Only enable initial delay if configured value is greater than 0
+            if (config->initial_movement_delay_ms > 0) {
+                data->initial_delay_active = true;
+
+                // Start the initial delay timer with the configured delay
+                k_work_schedule(&data->initial_delay_timer, K_MSEC(config->initial_movement_delay_ms));
+
+                LOG_DBG("Movement started at %lld ms, initial delay of %d ms active",
+                       current_time_ms, config->initial_movement_delay_ms);
+            } else {
+                data->initial_delay_active = false;
+                LOG_DBG("Movement started at %lld ms, initial delay disabled", current_time_ms);
+            }
+        } else {
+            data->movement_count++;
+
+            // Check if we've been moving long enough to be considered dragging
+            int64_t movement_duration = current_time_ms - data->first_movement_time_ms;
+
+            // If we've exceeded any tap threshold, it's definitely a drag
+            if (!data->is_dragging) {
+                // Log detailed reason when tap gets canceled during movement
+                if (movement_duration > TAP_MAX_DURATION_MS) {
+                    LOG_WRN("DRAG DETECTED - duration exceeded: %lld ms > %d ms",
+                           movement_duration, TAP_MAX_DURATION_MS);
+                    data->is_dragging = true;
+                    data->tap_in_progress = false;
+                }
+                else if (data->total_movement_distance > TAP_MAX_DISTANCE) {
+                    LOG_WRN("DRAG DETECTED - distance too large: %d > %d (this movement: %d)",
+                           data->total_movement_distance, TAP_MAX_DISTANCE, this_movement);
+                    data->is_dragging = true;
+                    data->tap_in_progress = false;
+                }
+
+                // Cancel initial delay if we determine it's a drag
+                if (data->is_dragging && data->initial_delay_active) {
+                    LOG_WRN("CANCELING initial delay due to drag detection");
+                    k_work_cancel_delayable(&data->initial_delay_timer);
+                    data->initial_delay_active = false;
+                }
+            }
+
+            // Log large movements that might affect tap detection
+            if (this_movement > TAP_MAX_DISTANCE / 2) {
+                LOG_WRN("LARGE MOVEMENT: %d units (accumulated: %d, max: %d), event #%d at %lld ms",
+                       this_movement, data->total_movement_distance, TAP_MAX_DISTANCE,
+                       data->movement_count, movement_duration);
             }
         }
 
-    //     // Cancel any pending tap timer
-    //     k_work_cancel_delayable(&data->tap_timer);
+        // Update last movement time
+        data->last_movement_time_ms = current_time_ms;
 
-    //     // Track total movement distance
-    //     int16_t this_movement = abs(mov_x) + abs(mov_y);
-    //     data->total_movement_distance += this_movement;
+        // Schedule the tap timer - this will fire if no more events are received
+        // Use a shorter timer when still within tap threshold to detect taps quicker
+        int64_t movement_duration = current_time_ms - data->first_movement_time_ms;
+        uint32_t timeout = (movement_duration < TAP_MAX_DURATION_MS) ?
+                          (TAP_COOLDOWN_TIMEOUT_MS / 2) : TAP_COOLDOWN_TIMEOUT_MS;
+        k_work_schedule(&data->tap_timer, K_MSEC(timeout));
 
-    //     // If this is the start of a new movement sequence
-    //     if (!data->is_moving) {
-    //         data->is_moving = true;
-    //         data->first_movement_time_ms = current_time_ms;
-    //         data->movement_count = 1;
-    //         data->tap_in_progress = true;
-    //         data->accumulated_x = 0;
-    //         data->accumulated_y = 0;
-    //         data->total_movement_distance = this_movement;
+        /* Commenting out movement accumulation as it's causing issues with overshooting
+        // Always track movement for potential reversal or delayed reporting
+        if (have_x) {
+            data->accumulated_x += mov_x;
+        }
+        if (have_y) {
+            data->accumulated_y += mov_y;
+        }
+        */
 
-    //         LOG_WRN("MOVEMENT START with initial distance %d", this_movement);
-
-    //         // Only enable initial delay if configured value is greater than 0
-    //         if (config->initial_movement_delay_ms > 0) {
-    //             data->initial_delay_active = true;
-
-    //             // Start the initial delay timer with the configured delay
-    //             k_work_schedule(&data->initial_delay_timer, K_MSEC(config->initial_movement_delay_ms));
-
-    //             LOG_DBG("Movement started at %lld ms, initial delay of %d ms active",
-    //                    current_time_ms, config->initial_movement_delay_ms);
-    //         } else {
-    //             data->initial_delay_active = false;
-    //             LOG_DBG("Movement started at %lld ms, initial delay disabled", current_time_ms);
-    //         }
-    //     } else {
-    //         data->movement_count++;
-
-    //         // Check if we've been moving long enough to be considered dragging
-    //         int64_t movement_duration = current_time_ms - data->first_movement_time_ms;
-
-    //         // If we've exceeded any tap threshold, it's definitely a drag
-    //         if (!data->is_dragging) {
-    //             // Log detailed reason when tap gets canceled during movement
-    //             if (movement_duration > TAP_MAX_DURATION_MS) {
-    //                 LOG_WRN("DRAG DETECTED - duration exceeded: %lld ms > %d ms",
-    //                        movement_duration, TAP_MAX_DURATION_MS);
-    //                 data->is_dragging = true;
-    //                 data->tap_in_progress = false;
-    //             }
-    //             else if (data->total_movement_distance > TAP_MAX_DISTANCE) {
-    //                 LOG_WRN("DRAG DETECTED - distance too large: %d > %d (this movement: %d)",
-    //                        data->total_movement_distance, TAP_MAX_DISTANCE, this_movement);
-    //                 data->is_dragging = true;
-    //                 data->tap_in_progress = false;
-    //             }
-
-    //             // Cancel initial delay if we determine it's a drag
-    //             if (data->is_dragging && data->initial_delay_active) {
-    //                 LOG_WRN("CANCELING initial delay due to drag detection");
-    //                 k_work_cancel_delayable(&data->initial_delay_timer);
-    //                 data->initial_delay_active = false;
-    //             }
-    //         }
-
-    //         // Log large movements that might affect tap detection
-    //         if (this_movement > TAP_MAX_DISTANCE / 2) {
-    //             LOG_WRN("LARGE MOVEMENT: %d units (accumulated: %d, max: %d), event #%d at %lld ms",
-    //                    this_movement, data->total_movement_distance, TAP_MAX_DISTANCE,
-    //                    data->movement_count, movement_duration);
-    //         }
-    //     }
-
-    //     // Update last movement time
-    //     data->last_movement_time_ms = current_time_ms;
-
-    //     // Schedule the tap timer - this will fire if no more events are received
-    //     // Use a shorter timer when still within tap threshold to detect taps quicker
-    //     int64_t movement_duration = current_time_ms - data->first_movement_time_ms;
-    //     uint32_t timeout = (movement_duration < TAP_MAX_DURATION_MS) ?
-    //                       (TAP_COOLDOWN_TIMEOUT_MS / 2) : TAP_COOLDOWN_TIMEOUT_MS;
-    //     k_work_schedule(&data->tap_timer, K_MSEC(timeout));
-
-    //     /* Commenting out movement accumulation as it's causing issues with overshooting
-    //     // Always track movement for potential reversal or delayed reporting
-    //     if (have_x) {
-    //         data->accumulated_x += mov_x;
-    //     }
-    //     if (have_y) {
-    //         data->accumulated_y += mov_y;
-    //     }
-    //     */
-
-    //     // Only report movement immediately if not in initial delay period
-    //     if (!data->initial_delay_active) {
-    //         if (have_x) {
-    //             ret = input_report_rel(data->dev, INPUT_REL_X, mov_x, !have_y, K_NO_WAIT);
-    //         }
-    //         if (have_y) {
-    //             ret = input_report_rel(data->dev, INPUT_REL_Y, mov_y, true, K_NO_WAIT);
-    //         }
-    //         LOG_DBG("Reporting movement (x=%d, y=%d)", mov_x, mov_y);
-    //     } else {
-    //         LOG_DBG("Delaying movement (x=%d, y=%d) during initial delay", mov_x, mov_y);
-    //     }
+        // Only report movement immediately if not in initial delay period
+        if (!data->initial_delay_active) {
+            if (have_x) {
+                ret = input_report_rel(data->dev, INPUT_REL_X, mov_x, !have_y, K_NO_WAIT);
+            }
+            if (have_y) {
+                ret = input_report_rel(data->dev, INPUT_REL_Y, mov_y, true, K_NO_WAIT);
+            }
+            LOG_DBG("Reporting movement (x=%d, y=%d)", mov_x, mov_y);
+        } else {
+            LOG_DBG("Delaying movement (x=%d, y=%d) during initial delay", mov_x, mov_y);
+        }
     }
 }
 
@@ -1613,17 +1613,53 @@ int zmk_mouse_ps2_tp_value6_upper_plateau_speed_change(int amount) {
  */
 
 int zmk_mouse_ps2_tp_z_force_get(uint8_t *z_force) {
-    // Choose the appropriate RAM location for z-force
-    // Here we're using the command that was previously defined
-    struct zmk_mouse_ps2_send_cmd_resp resp = zmk_mouse_ps2_send_cmd(
-        MOUSE_PS2_CMD_TP_GET_Z_FORCE, sizeof(MOUSE_PS2_CMD_TP_GET_Z_FORCE), NULL, MOUSE_PS2_CMD_TP_GET_Z_FORCE_RESP_LEN, true);
-    if (resp.err) {
-        LOG_ERR("Could not get Z-axis force: %s (err: %d)", resp.err_msg, resp.err);
-        return resp.err;
+    struct zmk_mouse_ps2_data *data = &zmk_mouse_ps2_data;
+
+    if (!data->is_trackpoint) {
+        LOG_WRN("Device is not a trackpoint, cannot read RAM");
+        return -1;
     }
 
-    *z_force = resp.resp_buffer[0];
-    LOG_DBG("Trackpoint xmsb is %d", *z_force);
+    uint8_t d8_value = 0;
+    uint8_t d9_value = 0;
+    int err = 0;
+
+    // Read address 0xD8 (MSB)
+    char cmd_d8[4] = { 0xE2, 0x80, 0xD8, 0 };
+    struct zmk_mouse_ps2_send_cmd_resp resp_d8 = zmk_mouse_ps2_send_cmd(
+        cmd_d8, sizeof(cmd_d8), NULL, MOUSE_PS2_CMD_TP_GET_Z_FORCE_RESP_LEN, true);
+
+    if (resp_d8.err) {
+        LOG_WRN("RAM[0xD8] read failed: %s (err: %d)",
+               resp_d8.err_msg, resp_d8.err);
+        return resp_d8.err;
+    } else {
+        d8_value = resp_d8.resp_buffer[0];
+        // LOG_WRN("RAM[0xD8] = 0x%02X (%d)", d8_value, d8_value);
+    }
+
+    // Read address 0xD9 (LSB)
+    char cmd_d9[4] = { 0xE2, 0x80, 0xD9, 0 };
+    struct zmk_mouse_ps2_send_cmd_resp resp_d9 = zmk_mouse_ps2_send_cmd(
+        cmd_d9, sizeof(cmd_d9), NULL, MOUSE_PS2_CMD_TP_GET_Z_FORCE_RESP_LEN, true);
+
+    if (resp_d9.err) {
+        LOG_WRN("RAM[0xD9] read failed: %s (err: %d)",
+               resp_d9.err_msg, resp_d9.err);
+        return resp_d9.err;
+    } else {
+        d9_value = resp_d9.resp_buffer[0];
+        // LOG_WRN("RAM[0xD9] = 0x%02X (%d)", d9_value, d9_value);
+    }
+
+    // Combine values: D8 as MSB, D9 as LSB
+    uint16_t combined_value = (d8_value << 8) | d9_value;
+
+    // LOG_WRN("Combined D8:D9 value: 0x%04X (%d)", combined_value, combined_value);
+
+    // Return the original z-force value as requested
+    *z_force = (uint8_t)combined_value;
+
     return 0;
 }
 
