@@ -113,7 +113,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define MOUSE_PS2_CMD_TP_SET_VALUE6_UPPER_PLATEAU_SPEED_DEFAULT 0x61
 
 #define MOUSE_PS2_ST_TP_Z_FORCE "tp_z_force"
-#define MOUSE_PS2_CMD_TP_GET_Z_FORCE "\xe2\x80\x19"
+#define MOUSE_PS2_CMD_TP_GET_Z_FORCE "\xe2\x80\xe8"
 #define MOUSE_PS2_CMD_TP_GET_Z_FORCE_RESP_LEN 1
 
 #define MOUSE_PS2_ST_TP_PTS_THRESHOLD "tp_pts_threshold"
@@ -875,7 +875,7 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
 
                 // iterate current_ram_addr 16 times
                 // Iterate over specific RAM addresses of interest
-                uint8_t addresses_of_interest[] = {0xf7, 0xf3, 0xe8, 0xe2, 0xd1};
+                uint8_t addresses_of_interest[] = {0xe8, 0xe2};
                 for (int i = 0; i < sizeof(addresses_of_interest); i++) {
                     current_ram_addr = addresses_of_interest[i];
 
