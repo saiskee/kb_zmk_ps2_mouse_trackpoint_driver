@@ -874,8 +874,12 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
                 move_counter = 0;
 
                 // iterate current_ram_addr 16 times
+                // Iterate over specific RAM addresses of interest
+                uint8_t addresses_of_interest[] = {0xf7, 0xf3, 0xe8, 0xe2, 0xd1};
+                for (int i = 0; i < sizeof(addresses_of_interest); i++) {
+                    current_ram_addr = addresses_of_interest[i];
 
-            for (int i = 0; i < 256; i++) {
+            // for (int i = 0; i < 256; i++) {
                 // Construct the command: 0xE2 0x80 <addr>
                 char cmd[4] = { 0xE2, 0x80, current_ram_addr, 0 };
 
