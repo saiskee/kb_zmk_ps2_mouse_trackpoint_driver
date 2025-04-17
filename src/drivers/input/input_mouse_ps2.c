@@ -160,6 +160,7 @@ static uint8_t current_ram_addr = 0x2F; // Global RAM address to read
 #define TAP_MAX_DURATION_MS 80      // Maximum duration for a tap (reduced from 100ms)
 #define TAP_MIN_DURATION_MS 5       // Minimum duration for a tap to be considered valid
 #define TAP_DOUBLE_TAP_TIMEOUT_MS 300  // Maximum time between taps for double tap
+#define TAP_POST_TAP_COOLDOWN_MS 120   // Cooldown period after a tap before another tap can be recognized
 #define TAP_MAX_DISTANCE 100          // Maximum total distance for a tap (sum of absolute X and Y movement)
 #define DEFAULT_INITIAL_MOVEMENT_DELAY_MS TAP_MAX_DURATION_MS  // Default delay for initial mouse movement reporting
 
@@ -575,6 +576,26 @@ static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
     // Current time
     int64_t current_time_ms = k_uptime_get();
 
+    // Check if we're within the post-tap cooldown period
+    if (data->last_was_tap) {
+        int64_t time_since_last_tap = current_time_ms - data->last_tap_time_ms;
+        if (time_since_last_tap < TAP_POST_TAP_COOLDOWN_MS) {
+            LOG_WRN("IGNORING TAP - within post-tap cooldown period (%lld ms < %d ms)",
+                    time_since_last_tap, TAP_POST_TAP_COOLDOWN_MS);
+
+            // Reset movement tracking but preserve tap state
+            data->is_moving = false;
+            data->is_dragging = false;
+            data->movement_count = 0;
+            data->tap_in_progress = false;
+            data->accumulated_x = 0;
+            data->accumulated_y = 0;
+            data->total_movement_distance = 0;
+            data->initial_delay_active = false;
+            return;
+        }
+    }
+
     // If we're still in moving state
     if (data->is_moving) {
         // Cancel any pending initial delay timer
@@ -616,19 +637,27 @@ static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
             if (config->single_tap_click) {
                 // In single tap mode, every tap generates a click
                 zmk_mouse_ps2_perform_click();
-                // Reset tap tracking
-                data->last_was_tap = false;
+                // Update tap tracking
+                data->last_was_tap = true;
+                data->last_tap_time_ms = current_time_ms;
             } else {
                 // In double tap mode, check for double tap
                 if (data->last_was_tap) {
                     int64_t time_between_taps = current_time_ms - data->last_tap_time_ms;
 
-                    if (time_between_taps <= TAP_DOUBLE_TAP_TIMEOUT_MS) {
+                    if (time_between_taps <= TAP_DOUBLE_TAP_TIMEOUT_MS &&
+                        time_between_taps >= TAP_POST_TAP_COOLDOWN_MS) {
                         // This is a double tap! Trigger mouse click
                         LOG_WRN("DOUBLE TAP DETECTED - Time between taps: %lld ms", time_between_taps);
                         zmk_mouse_ps2_perform_click();
                         // Reset double tap tracking after handling
                         data->last_was_tap = false;
+                    } else if (time_between_taps < TAP_POST_TAP_COOLDOWN_MS) {
+                        // Too little time between taps, ignore this tap
+                        LOG_WRN("IGNORING TAP - too soon after previous tap (%lld ms < %d ms)",
+                                time_between_taps, TAP_POST_TAP_COOLDOWN_MS);
+                        data->last_was_tap = true;
+                        data->last_tap_time_ms = current_time_ms;
                     } else {
                         // Too much time between taps, this starts a new sequence
                         LOG_DBG("Time between taps too long: %lld ms > %d ms",
