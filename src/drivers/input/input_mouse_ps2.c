@@ -157,7 +157,7 @@ static uint8_t current_ram_addr = 0x2F; // Global RAM address to read
 
 // Configuration values for tap detection
 #define TAP_COOLDOWN_TIMEOUT_MS 80  // Time to wait for movement to end
-#define TAP_MAX_DURATION_MS 80      // Maximum duration for a tap (reduced from 100ms)
+#define TAP_MAX_DURATION_MS 90      // Maximum duration for a tap (reduced from 100ms)
 #define TAP_MIN_DURATION_MS 5       // Minimum duration for a tap to be considered valid
 #define TAP_DOUBLE_TAP_TIMEOUT_MS 300  // Maximum time between taps for double tap
 #define TAP_POST_TAP_COOLDOWN_MS 120   // Cooldown period after a tap before another tap can be recognized
