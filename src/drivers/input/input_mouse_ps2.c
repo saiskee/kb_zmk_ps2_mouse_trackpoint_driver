@@ -156,6 +156,10 @@ static uint8_t current_ram_addr = 0x2F; // Global RAM address to read
 
 
 // Configuration values for tap detection
+// Tap detection works by:
+// 1. When movement starts, an initial delay timer is set
+// 2. A tap is only recognized if it occurs entirely within this initial delay period
+// 3. A tap must have minimal movement and end quickly (within TAP_MAX_DURATION_MS)
 #define TAP_COOLDOWN_TIMEOUT_MS 80  // Time to wait for movement to end
 #define TAP_MAX_DURATION_MS 90      // Maximum duration for a tap (reduced from 100ms)
 #define TAP_MIN_DURATION_MS 5       // Minimum duration for a tap to be considered valid
@@ -163,6 +167,7 @@ static uint8_t current_ram_addr = 0x2F; // Global RAM address to read
 #define TAP_POST_TAP_COOLDOWN_MS 120   // Cooldown period after a tap before another tap can be recognized
 #define TAP_MAX_DISTANCE 100          // Maximum total distance for a tap (sum of absolute X and Y movement)
 #define DEFAULT_INITIAL_MOVEMENT_DELAY_MS TAP_MAX_DURATION_MS  // Default delay for initial mouse movement reporting
+                                                              // Also defines the window during which a tap can be detected
 
 /*
  * Global Variables
@@ -607,16 +612,21 @@ static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
         // Calculate total movement duration
         int64_t total_duration = data->last_movement_time_ms - data->first_movement_time_ms;
 
+        // Check if the initial delay was active for this movement sequence
+        bool had_initial_delay = config->initial_movement_delay_ms > 0;
+
         // Ignore very short taps (likely noise or spurious inputs)
         if (total_duration < TAP_MIN_DURATION_MS) {
             LOG_WRN("IGNORING SPURIOUS TAP - too short (%lld ms)", total_duration);
         }
         // Check if this was a tap (short duration movement with minimal distance)
-        // A tap should be a very short duration movement with little distance traveled
+        // A tap must be within initial delay period, very short duration, and minimal distance
         else if (total_duration <= TAP_MAX_DURATION_MS &&
                 total_duration >= TAP_MIN_DURATION_MS &&
                 !data->is_dragging &&
-                data->total_movement_distance <= TAP_MAX_DISTANCE) {
+                data->total_movement_distance <= TAP_MAX_DISTANCE &&
+                had_initial_delay &&
+                total_duration <= config->initial_movement_delay_ms) {
 
             LOG_WRN("TAP DETECTED with duration %lld ms, distance %d",
                     total_duration, data->total_movement_distance);
@@ -679,7 +689,11 @@ static void zmk_mouse_ps2_tap_timer_callback(struct k_work *work) {
             // Not a tap or drag, log detailed failure reason
             char reason[128] = "";
 
-            if (total_duration < TAP_MIN_DURATION_MS) {
+            if (!had_initial_delay || total_duration > config->initial_movement_delay_ms) {
+                snprintf(reason, sizeof(reason), "not within initial delay period (%lld ms > %d ms)",
+                        total_duration, config->initial_movement_delay_ms);
+            }
+            else if (total_duration < TAP_MIN_DURATION_MS) {
                 snprintf(reason, sizeof(reason), "duration too short (%lld ms < %d ms)",
                         total_duration, TAP_MIN_DURATION_MS);
             }
@@ -726,7 +740,7 @@ static void zmk_mouse_ps2_initial_delay_timer_callback(struct k_work *work) {
     // Initial delay is over, now we can report the accumulated movement
     data->initial_delay_active = false;
 
-    /* Commenting out accumulated movement reporting as it's causing issues
+    /* Commenting out accumulated movement reporting as it's causing issues with overshooting
     // Report the accumulated movement if any
     if (data->accumulated_x != 0) {
         input_report_rel(data->dev, INPUT_REL_X, data->accumulated_x,
@@ -740,9 +754,13 @@ static void zmk_mouse_ps2_initial_delay_timer_callback(struct k_work *work) {
             data->accumulated_x, data->accumulated_y);
     */
 
+    // Check if a tap is still possible based on the accumulated distance
+    bool tap_still_possible = data->total_movement_distance <= TAP_MAX_DISTANCE;
+
     // Just log that delay ended
-    LOG_WRN("INITIAL DELAY ENDED after %d ms, movement count: %d, distance: %d",
-           DEFAULT_INITIAL_MOVEMENT_DELAY_MS, data->movement_count, data->total_movement_distance);
+    LOG_WRN("INITIAL DELAY ENDED after %d ms, movement count: %d, distance: %d, tap still possible: %s",
+           DEFAULT_INITIAL_MOVEMENT_DELAY_MS, data->movement_count,
+           data->total_movement_distance, tap_still_possible ? "yes" : "no");
 }
 
 // Function to initialize the tap detection data
@@ -945,6 +963,9 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
 
             // Check if we've been moving long enough to be considered dragging
             int64_t movement_duration = current_time_ms - data->first_movement_time_ms;
+            bool tap_still_possible = movement_duration <= TAP_MAX_DURATION_MS &&
+                                     data->total_movement_distance <= TAP_MAX_DISTANCE &&
+                                     data->initial_delay_active;
 
             // If we've exceeded any tap threshold, it's definitely a drag
             if (!data->is_dragging) {
@@ -968,6 +989,13 @@ void zmk_mouse_ps2_activity_move_mouse(int16_t mov_x, int16_t mov_y) {
                     k_work_cancel_delayable(&data->initial_delay_timer);
                     data->initial_delay_active = false;
                 }
+            }
+
+            // Log tap possibility status if it changes
+            if (data->tap_in_progress && !tap_still_possible) {
+                LOG_WRN("TAP CANCELLED - Movement too large or too long (distance: %d, duration: %lld ms)",
+                       data->total_movement_distance, movement_duration);
+                data->tap_in_progress = false;
             }
 
             // Log large movements that might affect tap detection
